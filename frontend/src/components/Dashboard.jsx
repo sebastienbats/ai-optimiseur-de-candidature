@@ -18,7 +18,7 @@ export default function Dashboard() {
         <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
           <header>
             <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl">
-              🎯 Skill Claude – Optimiseur de candidature
+              🤖 AI - Optimiseur de candidature
             </h1>
             <p className="mt-2 text-gray-600">
               Connecté en tant que {user?.email}
