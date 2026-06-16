@@ -16,7 +16,6 @@ export async function initializeDatabase() {
   // Activer les clés étrangères
   await db.exec('PRAGMA foreign_keys = ON');
 
-  // Créer les tables
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,9 +66,21 @@ export async function initializeDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       metadata TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS smtp_config (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL,
+      secure INTEGER DEFAULT 0,
+      user TEXT NOT NULL,
+      pass TEXT NOT NULL,
+      from_email TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
-  // Vérifier si la colonne is_active existe (pour les anciennes bases)
+  // Vérifier et ajouter les colonnes manquantes pour la compatibilité
   const tableInfo = await db.all('PRAGMA table_info(users)');
   const hasIsActive = tableInfo.some(col => col.name === 'is_active');
   if (!hasIsActive) {
@@ -89,18 +100,15 @@ export async function initializeDatabase() {
       const defaultPassword = process.env.ADMIN_PASSWORD || 'admin123';
       const defaultEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
       
-      // Vérifier si l'email existe déjà
       const existingUser = await db.get('SELECT * FROM users WHERE email = ?', [defaultEmail]);
       
       if (existingUser) {
-        // Mettre à jour l'utilisateur existant en admin
         await db.run(
           'UPDATE users SET is_admin = 1, is_active = 1 WHERE email = ?',
           [defaultEmail]
         );
         console.log(`✅ Utilisateur ${defaultEmail} promu admin`);
       } else {
-        // Créer un nouvel admin
         const password_hash = await bcrypt.hash(defaultPassword, 12);
         await db.run(
           'INSERT INTO users (email, password_hash, is_admin, is_active) VALUES (?, ?, 1, 1)',
