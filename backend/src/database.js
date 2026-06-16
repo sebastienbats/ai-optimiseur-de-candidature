@@ -16,6 +16,7 @@ export async function initializeDatabase() {
   // Activer les clés étrangères
   await db.exec('PRAGMA foreign_keys = ON');
 
+  // Créer les tables
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,18 +69,57 @@ export async function initializeDatabase() {
     );
   `);
 
+  // Vérifier si la colonne is_active existe (pour les anciennes bases)
+  const tableInfo = await db.all('PRAGMA table_info(users)');
+  const hasIsActive = tableInfo.some(col => col.name === 'is_active');
+  if (!hasIsActive) {
+    await db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1');
+  }
+
+  const hasIsAdmin = tableInfo.some(col => col.name === 'is_admin');
+  if (!hasIsAdmin) {
+    await db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
+  }
+
   // Créer un admin par défaut si aucun n'existe
-  const adminExists = await db.get('SELECT * FROM users WHERE is_admin = 1');
-  if (!adminExists) {
-    const defaultPassword = process.env.ADMIN_PASSWORD || 'admin123';
-    const password_hash = await bcrypt.hash(defaultPassword, 12);
-    await db.run(
-      'INSERT INTO users (email, password_hash, is_admin, is_active) VALUES (?, ?, 1, 1)',
-      [process.env.ADMIN_EMAIL || 'admin@example.com', password_hash]
-    );
-    console.log('✅ Admin par défaut créé avec succès');
-    console.log(`📧 Email: ${process.env.ADMIN_EMAIL || 'admin@example.com'}`);
-    console.log(`🔑 Mot de passe: ${defaultPassword}`);
+  try {
+    const adminExists = await db.get('SELECT * FROM users WHERE is_admin = 1 LIMIT 1');
+    
+    if (!adminExists) {
+      const defaultPassword = process.env.ADMIN_PASSWORD || 'admin123';
+      const defaultEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
+      
+      // Vérifier si l'email existe déjà
+      const existingUser = await db.get('SELECT * FROM users WHERE email = ?', [defaultEmail]);
+      
+      if (existingUser) {
+        // Mettre à jour l'utilisateur existant en admin
+        await db.run(
+          'UPDATE users SET is_admin = 1, is_active = 1 WHERE email = ?',
+          [defaultEmail]
+        );
+        console.log(`✅ Utilisateur ${defaultEmail} promu admin`);
+      } else {
+        // Créer un nouvel admin
+        const password_hash = await bcrypt.hash(defaultPassword, 12);
+        await db.run(
+          'INSERT INTO users (email, password_hash, is_admin, is_active) VALUES (?, ?, 1, 1)',
+          [defaultEmail, password_hash]
+        );
+        console.log('✅ Admin par défaut créé avec succès');
+        console.log(`📧 Email: ${defaultEmail}`);
+        console.log(`🔑 Mot de passe: ${defaultPassword}`);
+        console.log('⚠️  Changez ce mot de passe immédiatement !');
+      }
+    } else {
+      console.log('✅ Admin déjà existant');
+    }
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      console.log('ℹ️  Admin déjà existant (contrainte UNIQUE)');
+    } else {
+      console.error('Erreur lors de la création/admin:', error);
+    }
   }
 
   return db;
