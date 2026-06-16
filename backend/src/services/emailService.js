@@ -47,7 +47,7 @@ export async function sendEmail(to, subject, html, text = null) {
     const info = await transporter.sendMail({
       from: config.from_email,
       to,
-      subject,
+      subject: `[AI Optimiseur] ${subject}`,
       text: text || html.replace(/<[^>]*>/g, ''),
       html
     });
@@ -68,13 +68,11 @@ export async function sendBulkEmail(recipients, subject, message, batchSize = 10
   
   const transporter = await initializeEmail();
   if (!transporter) {
-    // Simuler l'envoi si SMTP non configuré
     results.success = recipients.length;
     console.log(`📧 Simulation d'envoi à ${recipients.length} destinataires`);
     return results;
   }
   
-  // Diviser en batches
   for (let i = 0; i < recipients.length; i += batchSize) {
     const batch = recipients.slice(i, i + batchSize);
     const promises = batch.map(email => 
@@ -88,7 +86,6 @@ export async function sendBulkEmail(recipients, subject, message, batchSize = 10
     
     await Promise.all(promises);
     
-    // Attendre un peu entre les batches pour éviter le rate limiting
     if (i + batchSize < recipients.length) {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
