@@ -43,7 +43,7 @@ export default function AdminDashboard() {
         <div className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              🔐 Administration
+              🔐 Administration - AI Optimiseur
             </h1>
             <p className="mt-1 text-sm text-gray-600">
               Connecté en tant que {user?.email} (Administrateur)
