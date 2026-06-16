@@ -21,7 +21,6 @@ router.get('/config', async (req, res) => {
       return res.status(404).json({ error: 'Aucune configuration SMTP trouvée' });
     }
     
-    // Ne pas renvoyer le mot de passe
     const { pass, ...safeConfig } = config;
     res.json(safeConfig);
   } catch (error) {
@@ -36,7 +35,6 @@ router.post('/config', async (req, res) => {
     const { host, port, secure, user, pass, from } = req.body;
     const adminId = req.userId;
     
-    // Validation
     if (!host || !port || !user || !pass || !from) {
       return res.status(400).json({ 
         error: 'Tous les champs sont requis: host, port, user, pass, from' 
@@ -80,7 +78,6 @@ router.post('/test', async (req, res) => {
       });
     }
     
-    // Créer un transporteur pour le test
     const transporter = nodemailer.createTransport({
       host,
       port: parseInt(port),
@@ -89,24 +86,21 @@ router.post('/test', async (req, res) => {
         user,
         pass
       },
-      // Timeout pour ne pas bloquer trop longtemps
       connectionTimeout: 5000,
       greetingTimeout: 5000,
       socketTimeout: 5000
     });
     
-    // Vérifier la connexion
     await transporter.verify();
     
-    // Si un email de test est fourni, envoyer un email de test
     if (testEmail) {
       await transporter.sendMail({
         from,
         to: testEmail,
-        subject: '🔧 Test de configuration SMTP - Skill Claude',
+        subject: '🔧 Test de configuration SMTP - AI Optimiseur',
         html: `
           <h2>✅ Configuration SMTP réussie !</h2>
-          <p>Ceci est un email de test envoyé depuis Skill Claude.</p>
+          <p>Ceci est un email de test envoyé depuis AI Optimiseur.</p>
           <p>Configuration :</p>
           <ul>
             <li>Hôte : ${host}</li>
@@ -114,9 +108,9 @@ router.post('/test', async (req, res) => {
             <li>Secure : ${secure ? 'Oui' : 'Non'}</li>
             <li>From : ${from}</li>
           </ul>
-          <p>L'administration de Skill Claude est maintenant prête à envoyer des emails.</p>
+          <p>L'administration de AI Optimiseur est maintenant prête à envoyer des emails.</p>
         `,
-        text: `Test de configuration SMTP - Skill Claude\n\nConfiguration:\nHôte: ${host}\nPort: ${port}\nSecure: ${secure ? 'Oui' : 'Non'}\nFrom: ${from}\n\nL'administration de Skill Claude est maintenant prête à envoyer des emails.`
+        text: `Test de configuration SMTP - AI Optimiseur\n\nConfiguration:\nHôte: ${host}\nPort: ${port}\nSecure: ${secure ? 'Oui' : 'Non'}\nFrom: ${from}\n\nL'administration de AI Optimiseur est maintenant prête à envoyer des emails.`
       });
     }
     
