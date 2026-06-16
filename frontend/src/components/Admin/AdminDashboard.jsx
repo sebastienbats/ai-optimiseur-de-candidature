@@ -4,6 +4,7 @@ import { api } from '../../services/api';
 import UserManagement from './UserManagement';
 import DatabaseManagement from './DatabaseManagement';
 import EmailManagement from './EmailManagement';
+import SmtpConfig from './SmtpConfig';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function AdminDashboard() {
@@ -82,17 +83,18 @@ export default function AdminDashboard() {
 
         {/* Navigation des onglets */}
         <div className="border-b border-gray-200 mb-6">
-          <nav className="-mb-px flex space-x-8">
+          <nav className="-mb-px flex space-x-8 overflow-x-auto">
             {[
               { id: 'users', label: '👥 Utilisateurs' },
               { id: 'database', label: '💾 Base de données' },
               { id: 'email', label: '📧 Emails' },
+              { id: 'smtp', label: '📨 Configuration SMTP' },
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  py-2 px-1 border-b-2 font-medium text-sm
+                  py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap
                   ${activeTab === tab.id
                     ? 'border-indigo-500 text-indigo-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}
@@ -109,6 +111,7 @@ export default function AdminDashboard() {
           {activeTab === 'users' && <UserManagement />}
           {activeTab === 'database' && <DatabaseManagement />}
           {activeTab === 'email' && <EmailManagement />}
+          {activeTab === 'smtp' && <SmtpConfig />}
         </div>
       </div>
     </div>
