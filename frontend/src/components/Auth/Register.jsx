@@ -41,13 +41,10 @@ export default function Register() {
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Créer un compte
+            AI - Optimiseur de candidature
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Ou{' '}
-            <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-500">
-              connectez-vous
-            </Link>
+            Créez votre compte pour commencer
           </p>
         </div>
 
@@ -105,6 +102,12 @@ export default function Register() {
             >
               {loading ? 'Inscription...' : 'S\'inscrire'}
             </button>
+          </div>
+          
+          <div className="text-center">
+            <Link to="/login" className="text-sm text-indigo-600 hover:text-indigo-500">
+              Déjà un compte ? Se connecter
+            </Link>
           </div>
         </form>
       </div>
