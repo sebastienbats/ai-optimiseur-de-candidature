@@ -31,11 +31,9 @@ router.post('/send', async (req, res) => {
     const userModel = new User(db);
     
     if (sendToAll) {
-      // Récupérer tous les utilisateurs actifs
       const result = await userModel.getAllUsers(1, 999999);
       recipients = result.users.filter(u => u.is_active);
     } else if (userIds.length > 0) {
-      // Récupérer les utilisateurs sélectionnés
       const placeholders = userIds.map(() => '?').join(',');
       recipients = await db.all(
         `SELECT id, email FROM users WHERE id IN (${placeholders}) AND is_active = 1`,
@@ -49,7 +47,6 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: 'Aucun destinataire valide' });
     }
     
-    // Envoyer les emails avec personnalisation
     const emailPromises = recipients.map(recipient => {
       const personalizedMessage = formatTemplate(message, { 
         NOM: recipient.email.split('@')[0] 
@@ -101,14 +98,14 @@ router.get('/templates', async (req, res) => {
       {
         id: 'welcome',
         name: 'Bienvenue',
-        subject: 'Bienvenue sur Skill Claude ! 🎯',
+        subject: 'Bienvenue sur AI Optimiseur ! 🎯',
         message: `Bonjour [NOM],
 
-Bienvenue sur Skill Claude, votre assistant pour optimiser vos candidatures !
+Bienvenue sur AI Optimiseur, votre assistant intelligent pour optimiser vos candidatures !
 
-Pour commencer, connectez-vous et entrez votre clé API Anthropic pour utiliser tous nos outils d'optimisation.
+Pour commencer, connectez-vous et entrez votre clé API pour utiliser tous nos outils d'optimisation.
 
-L'équipe Skill Claude`
+L'équipe AI Optimiseur`
       },
       {
         id: 'newsletter',
@@ -116,7 +113,7 @@ L'équipe Skill Claude`
         subject: 'Nouvelles fonctionnalités disponibles !',
         message: `Bonjour [NOM],
 
-Nous sommes ravis de vous annoncer les dernières améliorations de Skill Claude :
+Nous sommes ravis de vous annoncer les dernières améliorations de AI Optimiseur :
 
 - Nouvel outil de détection de signaux d'alarme
 - Amélioration de l'analyse ATS
@@ -124,7 +121,7 @@ Nous sommes ravis de vous annoncer les dernières améliorations de Skill Claude
 
 Découvrez toutes ces nouveautés en vous connectant dès maintenant !
 
-L'équipe Skill Claude`
+L'équipe AI Optimiseur`
       },
       {
         id: 'inactive',
@@ -132,7 +129,7 @@ L'équipe Skill Claude`
         subject: 'Nous vous avons manqué ?',
         message: `Bonjour [NOM],
 
-Nous avons remarqué que vous n'avez pas utilisé Skill Claude depuis un certain temps.
+Nous avons remarqué que vous n'avez pas utilisé AI Optimiseur depuis un certain temps.
 
 Nous avons ajouté de nouvelles fonctionnalités qui pourraient vous intéresser :
 - Réécriture complète du CV
@@ -141,7 +138,7 @@ Nous avons ajouté de nouvelles fonctionnalités qui pourraient vous intéresser
 
 Revenez nous voir !
 
-L'équipe Skill Claude`
+L'équipe AI Optimiseur`
       },
       {
         id: 'maintenance',
@@ -149,13 +146,13 @@ L'équipe Skill Claude`
         subject: 'Maintenance planifiée',
         message: `Bonjour [NOM],
 
-Nous vous informons qu'une maintenance du service Skill Claude est prévue le [DATE].
+Nous vous informons qu'une maintenance du service AI Optimiseur est prévue le [DATE].
 
 Le service sera indisponible pendant environ 2 heures.
 
 Nous vous remercions de votre compréhension.
 
-L'équipe Skill Claude`
+L'équipe AI Optimiseur`
       }
     ];
     
