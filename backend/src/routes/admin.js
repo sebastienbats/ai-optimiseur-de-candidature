@@ -4,6 +4,7 @@ import { isAdmin } from '../middleware/admin.js';
 import usersRouter from './admin/users.js';
 import databaseRouter from './admin/database.js';
 import emailRouter from './admin/email.js';
+import smtpRouter from './admin/smtp.js';
 
 const router = express.Router();
 
@@ -15,5 +16,6 @@ router.use(isAdmin);
 router.use(usersRouter);
 router.use('/database', databaseRouter);
 router.use('/email', emailRouter);
+router.use('/smtp', smtpRouter);
 
 export default router;
