@@ -115,7 +115,6 @@ export default function SmtpConfig() {
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
-    // Effacer le message quand l'utilisateur modifie un champ
     setMessage({ type: '', text: '' });
   };
 
