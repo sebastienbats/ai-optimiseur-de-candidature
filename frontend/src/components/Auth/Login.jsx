@@ -30,13 +30,10 @@ export default function Login() {
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Connexion
+            AI - Optimiseur de candidature
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Ou{' '}
-            <Link to="/register" className="font-medium text-indigo-600 hover:text-indigo-500">
-              créez un compte
-            </Link>
+            Connectez-vous pour accéder à vos outils
           </p>
         </div>
 
@@ -82,6 +79,12 @@ export default function Login() {
             >
               {loading ? 'Connexion...' : 'Se connecter'}
             </button>
+          </div>
+          
+          <div className="text-center">
+            <Link to="/register" className="text-sm text-indigo-600 hover:text-indigo-500">
+              Créer un compte
+            </Link>
           </div>
         </form>
       </div>
