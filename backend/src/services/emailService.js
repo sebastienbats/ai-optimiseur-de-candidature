@@ -1,41 +1,51 @@
 import nodemailer from 'nodemailer';
+import { SmtpConfig } from '../models/SmtpConfig.js';
+import { initializeDatabase } from '../database.js';
 
 let transporter = null;
+let db;
 
-export function initializeEmail() {
-  if (!transporter) {
-    const config = {
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    };
-
-    // Vérifier si les identifiants sont configurés
-    if (!config.auth.user || !config.auth.pass) {
-      console.warn('⚠️ SMTP non configuré. Les emails ne seront pas envoyés.');
-      return null;
-    }
-
-    transporter = nodemailer.createTransport(config);
+export async function initializeEmail() {
+  if (!db) {
+    db = await initializeDatabase();
   }
+  
+  const smtpConfig = new SmtpConfig(db);
+  const config = await smtpConfig.get();
+  
+  if (!config) {
+    console.warn('⚠️ Aucune configuration SMTP trouvée en base de données');
+    return null;
+  }
+
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure === 1,
+      auth: {
+        user: config.user,
+        pass: config.pass
+      }
+    });
+  }
+  
   return transporter;
 }
 
 export async function sendEmail(to, subject, html, text = null) {
   try {
-    const transporter = initializeEmail();
+    const transporter = await initializeEmail();
     
     if (!transporter) {
       console.log('📧 SMTP non configuré - Email simulé:', { to, subject });
       return { messageId: 'simulated-' + Date.now() };
     }
     
+    const config = await new SmtpConfig(db).get();
+    
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || 'noreply@skillclaude.com',
+      from: config.from_email,
       to,
       subject,
       text: text || html.replace(/<[^>]*>/g, ''),
@@ -56,10 +66,11 @@ export async function sendBulkEmail(recipients, subject, message, batchSize = 10
     errors: []
   };
   
-  // Si SMTP non configuré, simuler l'envoi
-  const transporter = initializeEmail();
+  const transporter = await initializeEmail();
   if (!transporter) {
+    // Simuler l'envoi si SMTP non configuré
     results.success = recipients.length;
+    console.log(`📧 Simulation d'envoi à ${recipients.length} destinataires`);
     return results;
   }
   
