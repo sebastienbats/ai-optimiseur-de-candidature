@@ -35,21 +35,33 @@ Application full-stack avec authentification sécurisée, gestion des clés API 
 - Node.js (v18+)
 - npm
 
-### Backend
+1. **Cloner le dépôt**
+   ```bash
+   git clone https://github.com/sebastienbats/ai-optimiseur-de-candidature.git
+   cd ai-optimiseur-de-candidature
+   ```
+2. **Installez les dépendances** :
+   ```bash
+   cd backend && npm install
+   cd ../frontend && npm install
+   ```
+3. Configurez les variables d'environnement :
 ```bash
-cd backend
-npm install
-cp .env.example .env
-# Éditer .env avec vos valeurs
-npm run dev
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+# Générez une clé de chiffrement
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
-### Frontend
+4. Lancez l'application :
 ```bash
-cd frontend
-npm install
-cp .env.example .env
-npm run dev
+# Terminal 1 - Backend
+cd backend && npm run dev
+# Terminal 2 - Frontend
+cd frontend && npm run dev
 ```
+5. Accédez à http://localhost:5173
+6. Connectez-vous avec admin@example.com / admin123
+ 
 ## 🔑 Accès Administrateur
 Par défaut :
 - Email : admin@example.com
@@ -104,30 +116,4 @@ docker-compose up -d
 - GET /api/admin/logs - Journal d'administration
 
 ## 📄 Licence
-MIT – Libre d'utilisation et de modification
-
-## Instructions finales
-
-1. **Créez la structure de dossiers** comme indiqué
-2. **Copiez chaque fichier** dans son emplacement exact
-3. **Installez les dépendances** :
-   ```bash
-   cd backend && npm install
-   cd ../frontend && npm install
-   ```
-4. Configurez les variables d'environnement :
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-# Générez une clé de chiffrement
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-5. Lancez l'application :
-```bash
-# Terminal 1 - Backend
-cd backend && npm run dev
-# Terminal 2 - Frontend
-cd frontend && npm run dev
-```
-6. Accédez à http://localhost:5173
-7. Connectez-vous avec admin@example.com / admin123
+MIT – Libre d'utilisation et de modification.
