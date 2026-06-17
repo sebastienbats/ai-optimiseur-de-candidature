@@ -21,6 +21,7 @@ export class OAuth2Service {
     this.initialized = false;
     this.pkceChallenge = null;
     this.pkceVerifier = null;
+    this._pendingVerifier = null;
   }
 
   /**
@@ -33,12 +34,17 @@ export class OAuth2Service {
     this.config = await smtpConfig.get();
 
     if (!this.config) {
-      throw new Error('Configuration SMTP non trouvée');
+      throw new Error('Configuration SMTP non trouvée. Veuillez d\'abord configurer SMTP avec OAuth 2.0.');
     }
 
     // Vérifier que c'est une configuration OAuth
     if (this.config.auth_type !== 'oauth2') {
-      throw new Error('La configuration actuelle n\'utilise pas OAuth 2.0');
+      throw new Error('La configuration actuelle n\'utilise pas OAuth 2.0. Veuillez sélectionner OAuth 2.0.');
+    }
+
+    // Vérifier que les credentials sont présents
+    if (!this.config.client_id || !this.config.client_secret) {
+      throw new Error('Client ID et Client Secret requis. Veuillez les configurer dans l\'interface d\'administration.');
     }
 
     this.oauth2Client = new OAuth2Client({
@@ -58,6 +64,24 @@ export class OAuth2Service {
 
     this.initialized = true;
     console.log('✅ OAuth 2.0 client initialisé (PKCE activé)');
+  }
+
+  /**
+   * Vérifie si la configuration OAuth est complète
+   */
+  async isConfigurationComplete() {
+    try {
+      const smtpConfig = new SmtpConfig(db);
+      const config = await smtpConfig.get();
+      
+      if (!config) return false;
+      if (config.auth_type !== 'oauth2') return false;
+      if (!config.client_id || !config.client_secret) return false;
+      
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   /**
@@ -84,17 +108,17 @@ export class OAuth2Service {
    * Récupère le code_verifier stocké
    */
   getPKCEVerifier() {
-    if (!this.pkceVerifier) {
+    if (!this.pkceVerifier && !this._pendingVerifier) {
       throw new Error('Aucun PKCE verifier disponible. Veuillez générer un challenge.');
     }
-    return this.pkceVerifier;
+    return this.pkceVerifier || this._pendingVerifier;
   }
 
   /**
    * Vérifie si un challenge PKCE est disponible
    */
   hasPKCEChallenge() {
-    return !!this.pkceVerifier && !!this.pkceChallenge;
+    return !!(this.pkceVerifier || this._pendingVerifier);
   }
 
   /**
@@ -104,6 +128,10 @@ export class OAuth2Service {
     try {
       if (!this.oauth2Client) {
         await this.initialize();
+      }
+
+      if (!this.oauth2Client) {
+        throw new Error('Client OAuth non initialisé');
       }
 
       // Vérifier si le token est expiré ou va expirer dans les 5 minutes
@@ -212,33 +240,46 @@ export class OAuth2Service {
    * Génère l'URL d'autorisation OAuth 2.0 avec PKCE
    */
   async getAuthUrl() {
-    await this.initialize();
-    
-    // Générer le challenge PKCE
-    const pkce = this.generatePKCEChallenge();
-    
-    const scopes = [
-      'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/gmail.compose'
-    ];
+    try {
+      // Vérifier que la configuration est complète
+      const isComplete = await this.isConfigurationComplete();
+      if (!isComplete) {
+        throw new Error('Configuration OAuth 2.0 incomplète. Veuillez configurer Client ID, Client Secret et Redirect URI dans l\'interface d\'administration.');
+      }
 
-    const url = this.oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: scopes,
-      include_granted_scopes: true,
-      prompt: 'consent',
-      // PKCE parameters
-      code_challenge: pkce.codeChallenge,
-      code_challenge_method: pkce.codeChallengeMethod
-    });
+      await this.initialize();
+      
+      if (!this.oauth2Client) {
+        throw new Error('Client OAuth non initialisé');
+      }
 
-    // Stocker le verifier pour l'échange du code
-    // (dans une application réelle, cela devrait être stocké en session)
-    // Ici, nous le stockons temporairement en mémoire
-    this._pendingVerifier = pkce.codeVerifier;
+      // Générer le challenge PKCE
+      const pkce = this.generatePKCEChallenge();
+      
+      const scopes = [
+        'https://www.googleapis.com/auth/gmail.send',
+        'https://www.googleapis.com/auth/gmail.compose'
+      ];
 
-    console.log('✅ URL d\'autorisation OAuth 2.0 générée avec PKCE');
-    return url;
+      const url = this.oauth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: scopes,
+        include_granted_scopes: true,
+        prompt: 'consent',
+        // PKCE parameters
+        code_challenge: pkce.codeChallenge,
+        code_challenge_method: pkce.codeChallengeMethod
+      });
+
+      // Stocker le verifier pour l'échange du code
+      this._pendingVerifier = pkce.codeVerifier;
+
+      console.log('✅ URL d\'autorisation OAuth 2.0 générée avec PKCE');
+      return url;
+    } catch (error) {
+      console.error('❌ Erreur génération URL OAuth:', error);
+      throw new Error(`Erreur lors de la génération de l'URL: ${error.message}`);
+    }
   }
 
   /**
@@ -246,8 +287,18 @@ export class OAuth2Service {
    */
   async exchangeCode(code) {
     try {
+      // Vérifier que la configuration est complète
+      const isComplete = await this.isConfigurationComplete();
+      if (!isComplete) {
+        throw new Error('Configuration OAuth 2.0 incomplète. Veuillez configurer Client ID, Client Secret et Redirect URI.');
+      }
+
       await this.initialize();
       
+      if (!this.oauth2Client) {
+        throw new Error('Client OAuth non initialisé');
+      }
+
       // Récupérer le verifier stocké
       const verifier = this._pendingVerifier || this.pkceVerifier;
       
@@ -265,22 +316,22 @@ export class OAuth2Service {
 
       const tokens = response.tokens;
 
-      if (!tokens.access_token || !tokens.refresh_token) {
-        throw new Error('Tokens OAuth invalides reçus');
+      if (!tokens.access_token) {
+        throw new Error('Access token non reçu');
       }
 
       // Sauvegarder les tokens
       const smtpConfig = new SmtpConfig(db);
       await smtpConfig.updateOAuthTokens(
         tokens.access_token,
-        tokens.refresh_token,
-        tokens.expiry_date
+        tokens.refresh_token || null,
+        tokens.expiry_date || null
       );
 
       // Mettre à jour la configuration en mémoire
       this.config.access_token = tokens.access_token;
-      this.config.refresh_token = tokens.refresh_token;
-      this.config.expiry_date = tokens.expiry_date;
+      this.config.refresh_token = tokens.refresh_token || this.config.refresh_token;
+      this.config.expiry_date = tokens.expiry_date || this.config.expiry_date;
 
       // Nettoyer le verifier
       this._pendingVerifier = null;
@@ -300,7 +351,25 @@ export class OAuth2Service {
    */
   async verifyAuth() {
     try {
+      const isComplete = await this.isConfigurationComplete();
+      if (!isComplete) {
+        return { 
+          valid: false, 
+          error: 'Configuration OAuth 2.0 incomplète',
+          pkceEnabled: true
+        };
+      }
+
       await this.initialize();
+      
+      if (!this.oauth2Client) {
+        return { 
+          valid: false, 
+          error: 'Client OAuth non initialisé',
+          pkceEnabled: true
+        };
+      }
+
       await this.refreshAccessToken();
       
       // Tester avec un appel simple
@@ -343,7 +412,9 @@ export class OAuth2Service {
     return {
       hasChallenge: this.hasPKCEChallenge(),
       hasVerifier: !!this._pendingVerifier,
-      hasStoredVerifier: !!this.pkceVerifier
+      hasStoredVerifier: !!this.pkceVerifier,
+      isConfigured: this.config !== null,
+      authType: this.config?.auth_type || 'none'
     };
   }
 }
@@ -374,6 +445,10 @@ export async function getPKCEStatus() {
 
 export async function resetPKCE() {
   return oauth2Service.resetPKCE();
+}
+
+export async function isConfigurationComplete() {
+  return oauth2Service.isConfigurationComplete();
 }
 
 export default oauth2Service;
