@@ -62,7 +62,7 @@ export async function initializeDatabase() {
       FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
-    -- Table des clés API par provider (NOUVEAU - multi-fournisseurs)
+    -- Table des clés API par provider (multi-fournisseurs)
     -- Supporte: gemini, groq, mistral, claude
     CREATE TABLE IF NOT EXISTS user_provider_keys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,24 +98,32 @@ export async function initializeDatabase() {
       metadata TEXT
     );
 
-    -- Table de configuration SMTP
+    -- Table de configuration SMTP (avec support OAuth 2.0)
     CREATE TABLE IF NOT EXISTS smtp_config (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      host TEXT NOT NULL,
-      port INTEGER NOT NULL,
+      host TEXT,
+      port INTEGER,
       secure INTEGER DEFAULT 0,
-      user TEXT NOT NULL,
-      pass TEXT NOT NULL,
+      user TEXT,
+      pass TEXT,
       from_email TEXT NOT NULL,
+      auth_type TEXT DEFAULT 'password', -- 'password' ou 'oauth2'
+      client_id TEXT,
+      client_secret TEXT,
+      redirect_uri TEXT,
+      refresh_token TEXT,
+      access_token TEXT,
+      expiry_date INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // ============================================
-  // VÉRIFICATION : Table user_provider_keys existe-t-elle ?
+  // VÉRIFICATION DES TABLES
   // ============================================
-  
+
+  // Vérifier que la table user_provider_keys existe
   const tables = await db.all(`
     SELECT name FROM sqlite_master 
     WHERE type='table' AND name='user_provider_keys'
@@ -146,30 +154,42 @@ export async function initializeDatabase() {
   // MIGRATIONS : Ajout des colonnes manquantes
   // ============================================
 
-  // Vérifier et ajouter la colonne is_active à users
-  const tableInfo = await db.all('PRAGMA table_info(users)');
+  // Vérifier et ajouter les colonnes à users
+  const userTableInfo = await db.all('PRAGMA table_info(users)');
   
-  const hasIsActive = tableInfo.some(col => col.name === 'is_active');
+  const hasIsActive = userTableInfo.some(col => col.name === 'is_active');
   if (!hasIsActive) {
     await db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1');
     console.log('✅ Colonne is_active ajoutée à users');
   }
 
-  const hasIsAdmin = tableInfo.some(col => col.name === 'is_admin');
+  const hasIsAdmin = userTableInfo.some(col => col.name === 'is_admin');
   if (!hasIsAdmin) {
     await db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
     console.log('✅ Colonne is_admin ajoutée à users');
   }
 
-  // ============================================
-  // MIGRATION : Ajout de la colonne auth_tag si manquante
-  // ============================================
-  
+  // Vérifier et ajouter les colonnes à user_provider_keys
   const providerTableInfo = await db.all('PRAGMA table_info(user_provider_keys)');
   const hasAuthTag = providerTableInfo.some(col => col.name === 'auth_tag');
   if (!hasAuthTag) {
     await db.exec('ALTER TABLE user_provider_keys ADD COLUMN auth_tag TEXT');
     console.log('✅ Colonne auth_tag ajoutée à user_provider_keys');
+  }
+
+  // Vérifier et ajouter les colonnes OAuth à smtp_config
+  const smtpTableInfo = await db.all('PRAGMA table_info(smtp_config)');
+  const oauthColumns = [
+    'auth_type', 'client_id', 'client_secret', 
+    'redirect_uri', 'refresh_token', 'access_token', 'expiry_date'
+  ];
+
+  for (const col of oauthColumns) {
+    const exists = smtpTableInfo.some(c => c.name === col);
+    if (!exists) {
+      await db.exec(`ALTER TABLE smtp_config ADD COLUMN ${col} TEXT`);
+      console.log(`✅ Colonne ${col} ajoutée à smtp_config`);
+    }
   }
 
   // ============================================
@@ -221,16 +241,30 @@ export async function initializeDatabase() {
   // ============================================
 
   await db.exec(`
+    -- Index pour les documents
     CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
     CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(type);
     CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at);
+    
+    -- Index pour les clés API par provider
     CREATE INDEX IF NOT EXISTS idx_user_provider_keys_user_id ON user_provider_keys(user_id);
     CREATE INDEX IF NOT EXISTS idx_user_provider_keys_provider ON user_provider_keys(provider);
+    
+    -- Index pour les logs admin
     CREATE INDEX IF NOT EXISTS idx_admin_logs_admin_id ON admin_logs(admin_id);
     CREATE INDEX IF NOT EXISTS idx_admin_logs_created_at ON admin_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_logs(action);
+    
+    -- Index pour l'historique des sauvegardes
     CREATE INDEX IF NOT EXISTS idx_backup_history_created_at ON backup_history(created_at);
+    
+    -- Index pour les utilisateurs
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin);
+    CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
+    
+    -- Index pour les clés API (ancien système)
+    CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_id ON user_api_keys(user_id);
   `);
 
   console.log('✅ Base de données initialisée avec succès');
@@ -249,16 +283,18 @@ export async function initializeDatabase() {
   console.log('📋 Tables disponibles:');
   finalTables.forEach(t => console.log(`  - ${t.name}`));
 
-  // Vérification spécifique de user_provider_keys
-  const providerKeysCheck = await db.get(`
-    SELECT COUNT(*) as count FROM sqlite_master 
-    WHERE type='table' AND name='user_provider_keys'
-  `);
-
-  if (providerKeysCheck && providerKeysCheck.count > 0) {
-    console.log('✅ Table user_provider_keys vérifiée et présente');
-  } else {
-    console.error('❌ Table user_provider_keys manquante !');
+  // Vérification spécifique des tables importantes
+  const importantTables = ['users', 'documents', 'user_provider_keys', 'smtp_config', 'admin_logs'];
+  for (const table of importantTables) {
+    const check = await db.get(`
+      SELECT COUNT(*) as count FROM sqlite_master 
+      WHERE type='table' AND name='${table}'
+    `);
+    if (check && check.count > 0) {
+      console.log(`✅ Table ${table} vérifiée et présente`);
+    } else {
+      console.error(`❌ Table ${table} manquante !`);
+    }
   }
 
   return db;
@@ -285,6 +321,22 @@ export async function getUserProviderKeys(db, userId) {
 }
 
 /**
+ * Récupère une clé API spécifique d'un provider
+ */
+export async function getProviderKey(db, userId, provider) {
+  try {
+    const result = await db.get(
+      'SELECT encrypted_key, iv, auth_tag FROM user_provider_keys WHERE user_id = ? AND provider = ?',
+      [userId, provider]
+    );
+    return result;
+  } catch (error) {
+    console.error(`Erreur récupération clé ${provider}:`, error);
+    return null;
+  }
+}
+
+/**
  * Vérifie si un provider est configuré pour un utilisateur
  */
 export async function hasProviderKey(db, userId, provider) {
@@ -301,14 +353,89 @@ export async function hasProviderKey(db, userId, provider) {
 }
 
 /**
+ * Supprime la clé API d'un provider
+ */
+export async function deleteProviderKey(db, userId, provider) {
+  try {
+    await db.run(
+      'DELETE FROM user_provider_keys WHERE user_id = ? AND provider = ?',
+      [userId, provider]
+    );
+    return true;
+  } catch (error) {
+    console.error(`Erreur suppression clé ${provider}:`, error);
+    return false;
+  }
+}
+
+/**
  * Liste des providers supportés
  */
 export const SUPPORTED_PROVIDERS = [
-  { id: 'gemini', name: 'Google Gemini', free: true },
-  { id: 'groq', name: 'Groq', free: true },
-  { id: 'mistral', name: 'Mistral AI', free: true },
-  { id: 'claude', name: 'Claude (Anthropic)', free: false }
+  { id: 'gemini', name: 'Google Gemini', free: true, models: ['gemini-2.5-flash', 'gemini-2.5-pro'] },
+  { id: 'groq', name: 'Groq', free: true, models: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'] },
+  { id: 'mistral', name: 'Mistral AI', free: true, models: ['mistral-small-latest', 'mistral-large-latest', 'codestral-latest'] },
+  { id: 'claude', name: 'Claude (Anthropic)', free: false, models: ['claude-3-sonnet-20240229'] }
 ];
+
+// ============================================
+// FONCTIONS UTILITAIRES POUR OAuth 2.0
+// ============================================
+
+/**
+ * Récupère la configuration OAuth 2.0
+ */
+export async function getOAuthConfig(db) {
+  try {
+    const config = await db.get(`
+      SELECT client_id, client_secret, redirect_uri, refresh_token, access_token, expiry_date 
+      FROM smtp_config 
+      WHERE auth_type = 'oauth2' 
+      LIMIT 1
+    `);
+    return config;
+  } catch (error) {
+    console.error('Erreur récupération config OAuth:', error);
+    return null;
+  }
+}
+
+/**
+ * Met à jour les tokens OAuth
+ */
+export async function updateOAuthTokens(db, accessToken, refreshToken, expiryDate) {
+  try {
+    await db.run(`
+      UPDATE smtp_config 
+      SET access_token = ?, refresh_token = ?, expiry_date = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE auth_type = 'oauth2'
+    `, [accessToken, refreshToken, expiryDate]);
+    return true;
+  } catch (error) {
+    console.error('Erreur mise à jour tokens OAuth:', error);
+    return false;
+  }
+}
+
+/**
+ * Vérifie si OAuth 2.0 est configuré
+ */
+export async function isOAuthConfigured(db) {
+  try {
+    const result = await db.get(`
+      SELECT COUNT(*) as count 
+      FROM smtp_config 
+      WHERE auth_type = 'oauth2' 
+      AND client_id IS NOT NULL 
+      AND client_secret IS NOT NULL 
+      AND refresh_token IS NOT NULL
+    `);
+    return result && result.count > 0;
+  } catch (error) {
+    console.error('Erreur vérification OAuth:', error);
+    return false;
+  }
+}
 
 // ============================================
 // EXPORT PAR DÉFAUT
