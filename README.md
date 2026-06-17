@@ -43,39 +43,62 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - Utiliser des modèles prédéfinis (Bienvenue, Newsletter, Inactif, Maintenance)
 - Personnaliser le sujet et le contenu
 - Utiliser [NOM] dans le message pour personnaliser par utilisateur
-#### 📧 Authentification SMTP
-##### OAuth 2.0 (Recommandé pour Gmail)
+#### 📧 Authentification SMTP par mot de passe
+- ✅ Compatibilité avec tous les serveurs SMTP
+- ✅ Simple à configurer
+- ⚠️ Moins sécurisé que OAuth 2.0
+#### Authentification SMTP OAuth 2.0 + PKCE
 - ✅ Sécurisé et moderne
 - ✅ Rafraîchissement automatique des tokens
 - ✅ Pas de mot de passe stocké en base
 - ✅ Configuration via Google Cloud Console
-###### 📝 Configuration OAuth 2.0 + PKCE
-- Créer un projet dans Google Cloud Console
-- Activer l'API Gmail
-- Créer des credentials (OAuth 2.0 Client ID)
-- Configurer les scopes : https://www.googleapis.com/auth/gmail.send
-- Ajouter l'URI de redirection : urn:ietf:wg:oauth:2.0:oob
-- Copier Client ID et Client Secret dans l'interface
-- Obtenir l'URL d'autorisation et autoriser l'accès
-- Échanger le code contre des tokens
-- Client ID et Client Secret (Google Cloud Console)
-- Génération automatique du code_verifier et code_challenge
-- Méthode S256 (SHA-256)
-- URL d'autorisation avec PKCE
-- Échange de code contre tokens avec PKCE
-- Rafraîchissement automatique
-- Statut PKCE visible
-##### Authentification par mot de passe
-- ✅ Compatibilité avec tous les serveurs SMTP
-- ✅ Simple à configurer
-- ⚠️ Moins sécurisé que OAuth 2.0
-
+- ✅ Assurez-vous que tous les champs sont remplis :
+|Champ|Statut|Exemple|
+|-----|------|-------|
+|Serveur SMTP|✅ Doit être rempli|smtp.gmail.com|
+|Port|✅ Doit être rempli|587|
+|Type d'authentification|✅ OAuth 2.0 + PKCE sélectionné|oauth2|
+|Client ID|✅ Doit être rempli|123456789-xxx.apps.googleusercontent.com|
+|Client Secret|✅ Doit être rempli|GOCSPX-xxxxxxxxxxxx|
+|Redirect URI|✅ Doit être rempli|urn:ietf:wg:oauth:2.0:oob|
+|Email d'envoi|✅ Doit être rempli|votre.email@gmail.com|
+⚠️ Si un de ces champs est vide, l'URL ne peut pas être générée.
+##### 🏗️ Configuration dans Google Cloud Console
+1. Activer l'API Gmail
+- Allez sur Google Cloud Console
+- Créez un nouveau projet ou sélectionnez un projet existant
+- Allez dans API et services → Bibliothèque
+- Recherchez "Gmail API" et activez-la
+2. Créer des identifiants
+- Allez dans API et services → Identifiants
+- Cliquez sur "Créer des identifiants" → "ID client OAuth"
+- Choisissez le type d'application :
+🖥️ Pour le mode test (OOB) - Déprécié mais fonctionne en test
+```text
+Type : Application de bureau
+Nom : AI Optimiseur (ou autre)
+```
+🌐 Pour le mode production (Recommandé)
+```text
+Type : Application Web
+Nom : AI Optimiseur (ou autre)
+URI de redirection autorisés : https://votre-domaine.com/oauth2/callback
+```
+3. Configurer l'écran de consentement OAuth
+- Allez dans API et services → Écran de consentement OAuth
+- Choisissez "Externe" (ou "Interne" si c'est pour un usage personnel)
+- Remplissez les champs :
+   - Nom de l'application : AI Optimiseur
+   - Email de support : votre email
+   - Email du développeur : votre email
+- Ajoutez les scopes :
+   - https://www.googleapis.com/auth/gmail.send
+   - https://www.googleapis.com/auth/gmail.compose
+   - Ajoutez vos emails dans la section "Utilisateurs de test" (si mode test)
 ## 🚀 Installation
-
 ### Prérequis
 - Node.js (v18+)
 - npm
-
 1. ```bash
    # **Cloner le dépôt**
    git clone https://github.com/sebastienbats/ai-optimiseur-de-candidature.git
