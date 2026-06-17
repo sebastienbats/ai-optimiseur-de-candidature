@@ -49,7 +49,7 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - ✅ Rafraîchissement automatique des tokens
 - ✅ Pas de mot de passe stocké en base
 - ✅ Configuration via Google Cloud Console
-###### 📝 Configuration OAuth 2.0
+###### 📝 Configuration OAuth 2.0 + PKCE
 - Créer un projet dans Google Cloud Console
 - Activer l'API Gmail
 - Créer des credentials (OAuth 2.0 Client ID)
@@ -58,6 +58,13 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - Copier Client ID et Client Secret dans l'interface
 - Obtenir l'URL d'autorisation et autoriser l'accès
 - Échanger le code contre des tokens
+- Client ID et Client Secret (Google Cloud Console)
+- Génération automatique du code_verifier et code_challenge
+- Méthode S256 (SHA-256)
+- URL d'autorisation avec PKCE
+- Échange de code contre tokens avec PKCE
+- Rafraîchissement automatique
+- Statut PKCE visible
 ##### Authentification par mot de passe
 - ✅ Compatibilité avec tous les serveurs SMTP
 - ✅ Simple à configurer
@@ -100,15 +107,23 @@ Par défaut :
 ⚠️ Changez immédiatement ces identifiants en production !
 
 ## 🔒 Sécurité
+### Chiffrement
 - Mots de passe : hashés avec bcrypt (coût 12)
 - Clés API : chiffrées avec AES‑256‑GCM (IV et auth tag stockés)
+- OAuth 2.0 + PKCE : Sécurité renforcée pour l'authentification Gmail
+- Code Verifier : 128 caractères aléatoires
+- Code Challenge : SHA-256 (S256)
+### Authentification
 - Sessions : JWT signés, stockés en localStorage
 - Rate limiting : 100 requêtes/min par IP, 30 pour les routes admin
 - Helmet : headers HTTP sécurisés
 - CORS : restreint aux origines autorisées
+### Protection
 - Validation : des entrées utilisateur
 - Journalisation : toutes les actions admin sont tracées (IP, date, action)
 - Protection : contre les injections SQL (via SQLite préparé)
+- PKCE : Protection contre les attaques par interception du code d'autorisation
+
 ## 🐳 Déploiement Docker
 ```bash
 docker-compose up -d
@@ -147,17 +162,12 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
     }
 }
 ```
-## 🔒 Sécurité
-- ✅ Mots de passe hashés (bcrypt)
-- ✅ Clés API chiffrées (AES-256-GCM)
-- ✅ JWT pour sessions
-- ✅ Rate limiting
-- ✅ Helmet pour headers HTTP
-- ✅ CORS configuré
-
 ## 📡 API
 - Toutes les routes sont préfixées par /api.
 ### Authentification (public)
@@ -195,11 +205,15 @@ server {
 |POST|/admin/database/import/json|Import JSON|
 |DELETE|/admin/database/backups/:filename|Supprimer une sauvegarde|
 |POST|/admin/email/send|Envoi d’emails groupés|
-|GET|/admin/email/templates|	Modèles d’email|
+|GET|/admin/email/templates|Modèles d’email|
 |GET|/admin/smtp/config|Récupérer config SMTP|
 |POST|/admin/smtp/config|Sauvegarder config SMTP|
 |POST|/admin/smtp/test|Tester config SMTP|
 |DELETE|/admin/smtp/config|Supprimer config|
+|GET|	/admin/smtp/oauth/auth-url|URL d'autorisation OAuth (PKCE)|
+|POST|/admin/smtp/oauth/exchange|Échanger code OAuth (PKCE)|
+|GET|/admin/smtp/oauth/status|Statut OAuth + PKCE|
+|POST|/admin/smtp/oauth/reset-pkce|Réinitialiser PKCE|
 |GET|/admin/logs|Journal d’administration|
 
 ## 🔧 Maintenance
@@ -218,6 +232,10 @@ npm start
 npm run backup
 # Vérifier l'intégrité de la base
 sqlite3 database.sqlite "PRAGMA integrity_check;"
+# Vérifier les tokens OAuth + PKCE
+node -e "import('./src/services/oauth2Service.js').then(m => m.verifyOAuth2Config().then(console.log))"
+# Vérifier le statut PKCE
+node -e "import('./src/services/oauth2Service.js').then(m => m.getPKCEStatus().then(console.log))"
 ```
 ## 📄 Licence
 MIT – Libre d'utilisation et de modification.
