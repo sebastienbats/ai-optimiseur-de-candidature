@@ -64,6 +64,7 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
    ```bash
    cd backend && npm install
    cd ../frontend && npm install
+   cd ..
    ```
 3. Configurez les variables d'environnement :
 ```bash
