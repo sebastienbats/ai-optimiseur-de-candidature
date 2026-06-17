@@ -9,7 +9,7 @@ export default function SmtpConfig() {
     user: '',
     pass: '',
     from: '',
-    auth_type: 'oauth2', // 'password' ou 'oauth2'
+    auth_type: 'oauth2',
     client_id: '',
     client_secret: '',
     redirect_uri: 'urn:ietf:wg:oauth:2.0:oob'
@@ -21,10 +21,15 @@ export default function SmtpConfig() {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [hasConfig, setHasConfig] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [oauthStatus, setOauthStatus] = useState({ status: 'not_configured', isConfigured: false });
+  const [oauthStatus, setOauthStatus] = useState({ 
+    status: 'not_configured', 
+    isConfigured: false,
+    pkce: { enabled: true, method: 'S256', status: null }
+  });
   const [oauthUrl, setOauthUrl] = useState('');
   const [oauthCode, setOauthCode] = useState('');
   const [exchanging, setExchanging] = useState(false);
+  const [pkceStatus, setPkceStatus] = useState(null);
 
   useEffect(() => {
     loadConfig();
@@ -53,6 +58,9 @@ export default function SmtpConfig() {
     try {
       const response = await api.get('/admin/smtp/oauth/status');
       setOauthStatus(response.data);
+      if (response.data.pkce) {
+        setPkceStatus(response.data.pkce.status);
+      }
     } catch (error) {
       console.error('Erreur vérification OAuth:', error);
     }
@@ -91,7 +99,10 @@ export default function SmtpConfig() {
         redirect_uri
       });
       setHasConfig(true);
-      setMessage({ type: 'success', text: `✅ Configuration ${auth_type === 'oauth2' ? 'OAuth 2.0' : 'SMTP'} sauvegardée avec succès` });
+      setMessage({ 
+        type: 'success', 
+        text: `✅ Configuration ${auth_type === 'oauth2' ? 'OAuth 2.0 avec PKCE' : 'SMTP'} sauvegardée avec succès` 
+      });
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
       if (auth_type === 'oauth2') {
         await checkOAuthStatus();
@@ -140,7 +151,7 @@ export default function SmtpConfig() {
       
       const testMsg = testEmail 
         ? `✅ Email de test envoyé à ${testEmail}` 
-        : `✅ Configuration ${auth_type === 'oauth2' ? 'OAuth 2.0' : 'SMTP'} validée`;
+        : `✅ Configuration ${auth_type === 'oauth2' ? 'OAuth 2.0 avec PKCE' : 'SMTP'} validée`;
       setMessage({ type: 'success', text: testMsg });
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
       
@@ -161,7 +172,17 @@ export default function SmtpConfig() {
     try {
       const response = await api.get('/admin/smtp/oauth/auth-url');
       setOauthUrl(response.data.url);
+      
+      // Afficher les infos PKCE
+      if (response.data.pkce) {
+        console.log('🔐 PKCE activé - Méthode:', response.data.pkce.method);
+      }
+      
       window.open(response.data.url, '_blank');
+      setMessage({ 
+        type: 'success', 
+        text: '✅ URL d\'autorisation générée avec PKCE (S256) - Une nouvelle fenêtre s\'est ouverte' 
+      });
     } catch (error) {
       setMessage({ type: 'error', text: 'Erreur lors de la génération de l\'URL OAuth' });
     }
@@ -176,7 +197,7 @@ export default function SmtpConfig() {
     setExchanging(true);
     try {
       await api.post('/admin/smtp/oauth/exchange', { code: oauthCode });
-      setMessage({ type: 'success', text: '✅ Tokens OAuth obtenus avec succès' });
+      setMessage({ type: 'success', text: '✅ Tokens OAuth obtenus avec succès (PKCE)' });
       setOauthCode('');
       await checkOAuthStatus();
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
@@ -236,7 +257,12 @@ export default function SmtpConfig() {
             )}
             {oauthStatus.isConfigured && oauthStatus.status === 'valid' && (
               <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
-                🔐 OAuth 2.0
+                🔐 OAuth 2.0 + PKCE
+              </span>
+            )}
+            {oauthStatus.pkce?.enabled && (
+              <span className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded">
+                ⚡ PKCE S256
               </span>
             )}
           </div>
@@ -267,7 +293,9 @@ export default function SmtpConfig() {
                 onChange={handleChange}
                 className="text-indigo-600 focus:ring-indigo-500"
               />
-              <span className="text-sm text-gray-700">OAuth 2.0 (Recommandé)</span>
+              <span className="text-sm text-gray-700">
+                OAuth 2.0 + PKCE <span className="text-xs text-green-600">(Recommandé)</span>
+              </span>
             </label>
             <label className="flex items-center space-x-2">
               <input
@@ -281,6 +309,11 @@ export default function SmtpConfig() {
               <span className="text-sm text-gray-700">Mot de passe</span>
             </label>
           </div>
+          {config.auth_type === 'oauth2' && (
+            <p className="mt-1 text-xs text-blue-600">
+              🔐 PKCE (Proof Key for Code Exchange) activé - Méthode S256
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -397,16 +430,23 @@ export default function SmtpConfig() {
                 />
               </div>
 
-              {/* OAuth 2.0 Flow */}
+              {/* OAuth 2.0 Flow avec PKCE */}
               <div className="md:col-span-2 bg-blue-50 rounded-lg p-4 border border-blue-200">
-                <h4 className="text-sm font-medium text-blue-800 mb-2">🔐 Configuration OAuth 2.0</h4>
+                <h4 className="text-sm font-medium text-blue-800 mb-2">
+                  🔐 Configuration OAuth 2.0 avec PKCE
+                </h4>
                 <div className="space-y-3">
-                  <button
-                    onClick={handleGetOAuthUrl}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                  >
-                    📋 Obtenir l'URL d'autorisation
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleGetOAuthUrl}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                    >
+                      📋 Obtenir l'URL d'autorisation (PKCE)
+                    </button>
+                    <span className="text-xs text-gray-500">
+                      Méthode: S256 | Code Verifier: 128 caractères
+                    </span>
+                  </div>
                   
                   <div className="flex gap-2">
                     <input
@@ -421,13 +461,20 @@ export default function SmtpConfig() {
                       disabled={exchanging}
                       className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm"
                     >
-                      {exchanging ? '⏳ Échange...' : '🔄 Échanger le code'}
+                      {exchanging ? '⏳ Échange...' : '🔄 Échanger avec PKCE'}
                     </button>
                   </div>
                   
                   {oauthStatus.isConfigured && (
                     <div className={`text-sm ${oauthStatus.status === 'valid' ? 'text-green-600' : 'text-red-600'}`}>
-                      Statut: {oauthStatus.status === 'valid' ? '✅ Tokens valides' : `❌ ${oauthStatus.details || 'Invalide'}`}
+                      Statut: {oauthStatus.status === 'valid' ? '✅ Tokens valides (PKCE)' : `❌ ${oauthStatus.details || 'Invalide'}`}
+                    </div>
+                  )}
+                  
+                  {pkceStatus && (
+                    <div className="text-xs text-gray-500">
+                      PKCE Status: {pkceStatus.hasChallenge ? '✅ Challenge actif' : '⚠️ Aucun challenge'}
+                      {pkceStatus.hasVerifier && ' | Verifier disponible'}
                     </div>
                   )}
                 </div>
@@ -508,13 +555,16 @@ export default function SmtpConfig() {
         <div className="mt-4 p-3 bg-gray-50 rounded-lg">
           <h4 className="text-sm font-medium text-gray-700 mb-2">📖 Configuration pour les services courants :</h4>
           <div className="space-y-1 text-xs text-gray-600">
-            <p><strong>Gmail (OAuth 2.0) :</strong> smtp.gmail.com, port 587, OAuth 2.0</p>
+            <p><strong>Gmail (OAuth 2.0 + PKCE) :</strong> smtp.gmail.com, port 587, OAuth 2.0</p>
             <p><strong>Gmail (Password) :</strong> smtp.gmail.com, port 587, STARTTLS</p>
             <p><strong>Outlook :</strong> smtp.office365.com, port 587, STARTTLS</p>
             <p><strong>SendGrid :</strong> smtp.sendgrid.net, port 587, STARTTLS</p>
             <p><strong>Mailgun :</strong> smtp.mailgun.org, port 587, STARTTLS</p>
             <p className="mt-2 text-yellow-600">
-              ⚠️ Pour Gmail avec OAuth 2.0, créez un projet dans Google Cloud Console et activez l'API Gmail.
+              ⚠️ Pour Gmail avec OAuth 2.0 + PKCE, créez un projet dans Google Cloud Console et activez l'API Gmail.
+            </p>
+            <p className="text-blue-600">
+              🔐 PKCE (S256) protège contre les attaques par interception du code d'autorisation.
             </p>
           </div>
         </div>
