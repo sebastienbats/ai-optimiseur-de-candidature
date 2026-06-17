@@ -3,11 +3,18 @@ import { open } from 'sqlite';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import bcrypt from 'bcrypt';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export async function initializeDatabase() {
+  // S'assurer que le dossier existe
+  const dbDir = join(__dirname, '../');
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
   const db = await open({
     filename: join(__dirname, '../database.sqlite'),
     driver: sqlite3.Database
@@ -16,7 +23,10 @@ export async function initializeDatabase() {
   // Activer les clés étrangères
   await db.exec('PRAGMA foreign_keys = ON');
 
-  // Créer toutes les tables
+  // ============================================
+  // CRÉATION DE TOUTES LES TABLES
+  // ============================================
+
   await db.exec(`
     -- Table des utilisateurs
     CREATE TABLE IF NOT EXISTS users (
@@ -53,6 +63,7 @@ export async function initializeDatabase() {
     );
 
     -- Table des clés API par provider (NOUVEAU - multi-fournisseurs)
+    -- Supporte: gemini, groq, mistral, claude
     CREATE TABLE IF NOT EXISTS user_provider_keys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
@@ -102,7 +113,37 @@ export async function initializeDatabase() {
   `);
 
   // ============================================
-  // MIGRATIONS : Ajout des colonnes manquantes pour compatibilité
+  // VÉRIFICATION : Table user_provider_keys existe-t-elle ?
+  // ============================================
+  
+  const tables = await db.all(`
+    SELECT name FROM sqlite_master 
+    WHERE type='table' AND name='user_provider_keys'
+  `);
+
+  if (tables.length === 0) {
+    console.warn('⚠️ Table user_provider_keys manquante, création...');
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS user_provider_keys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        encrypted_key TEXT NOT NULL,
+        iv TEXT NOT NULL,
+        auth_tag TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+        UNIQUE(user_id, provider)
+      )
+    `);
+    console.log('✅ Table user_provider_keys créée avec succès');
+  } else {
+    console.log('✅ Table user_provider_keys existe déjà');
+  }
+
+  // ============================================
+  // MIGRATIONS : Ajout des colonnes manquantes
   // ============================================
 
   // Vérifier et ajouter la colonne is_active à users
@@ -111,13 +152,24 @@ export async function initializeDatabase() {
   const hasIsActive = tableInfo.some(col => col.name === 'is_active');
   if (!hasIsActive) {
     await db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1');
-    console.log('✅ Colonne is_active ajoutée');
+    console.log('✅ Colonne is_active ajoutée à users');
   }
 
   const hasIsAdmin = tableInfo.some(col => col.name === 'is_admin');
   if (!hasIsAdmin) {
     await db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
-    console.log('✅ Colonne is_admin ajoutée');
+    console.log('✅ Colonne is_admin ajoutée à users');
+  }
+
+  // ============================================
+  // MIGRATION : Ajout de la colonne auth_tag si manquante
+  // ============================================
+  
+  const providerTableInfo = await db.all('PRAGMA table_info(user_provider_keys)');
+  const hasAuthTag = providerTableInfo.some(col => col.name === 'auth_tag');
+  if (!hasAuthTag) {
+    await db.exec('ALTER TABLE user_provider_keys ADD COLUMN auth_tag TEXT');
+    console.log('✅ Colonne auth_tag ajoutée à user_provider_keys');
   }
 
   // ============================================
@@ -171,20 +223,95 @@ export async function initializeDatabase() {
   await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
     CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(type);
+    CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at);
     CREATE INDEX IF NOT EXISTS idx_user_provider_keys_user_id ON user_provider_keys(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_provider_keys_provider ON user_provider_keys(provider);
     CREATE INDEX IF NOT EXISTS idx_admin_logs_admin_id ON admin_logs(admin_id);
     CREATE INDEX IF NOT EXISTS idx_admin_logs_created_at ON admin_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_backup_history_created_at ON backup_history(created_at);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin);
   `);
 
   console.log('✅ Base de données initialisée avec succès');
   console.log(`📁 Chemin: ${join(__dirname, '../database.sqlite')}`);
 
+  // ============================================
+  // VÉRIFICATION FINALE : Afficher les tables
+  // ============================================
+
+  const finalTables = await db.all(`
+    SELECT name FROM sqlite_master 
+    WHERE type='table' 
+    ORDER BY name
+  `);
+
+  console.log('📋 Tables disponibles:');
+  finalTables.forEach(t => console.log(`  - ${t.name}`));
+
+  // Vérification spécifique de user_provider_keys
+  const providerKeysCheck = await db.get(`
+    SELECT COUNT(*) as count FROM sqlite_master 
+    WHERE type='table' AND name='user_provider_keys'
+  `);
+
+  if (providerKeysCheck && providerKeysCheck.count > 0) {
+    console.log('✅ Table user_provider_keys vérifiée et présente');
+  } else {
+    console.error('❌ Table user_provider_keys manquante !');
+  }
+
   return db;
 }
 
 // ============================================
-// EXPORT DE LA FONCTION POUR UTILISATION EXTERNE
+// FONCTIONS UTILITAIRES POUR LA GESTION DES PROVIDERS
+// ============================================
+
+/**
+ * Récupère toutes les clés API d'un utilisateur par provider
+ */
+export async function getUserProviderKeys(db, userId) {
+  try {
+    const results = await db.all(
+      'SELECT provider, encrypted_key, iv, auth_tag FROM user_provider_keys WHERE user_id = ?',
+      [userId]
+    );
+    return results;
+  } catch (error) {
+    console.error('Erreur récupération clés provider:', error);
+    return [];
+  }
+}
+
+/**
+ * Vérifie si un provider est configuré pour un utilisateur
+ */
+export async function hasProviderKey(db, userId, provider) {
+  try {
+    const result = await db.get(
+      'SELECT COUNT(*) as count FROM user_provider_keys WHERE user_id = ? AND provider = ?',
+      [userId, provider]
+    );
+    return result && result.count > 0;
+  } catch (error) {
+    console.error('Erreur vérification clé provider:', error);
+    return false;
+  }
+}
+
+/**
+ * Liste des providers supportés
+ */
+export const SUPPORTED_PROVIDERS = [
+  { id: 'gemini', name: 'Google Gemini', free: true },
+  { id: 'groq', name: 'Groq', free: true },
+  { id: 'mistral', name: 'Mistral AI', free: true },
+  { id: 'claude', name: 'Claude (Anthropic)', free: false }
+];
+
+// ============================================
+// EXPORT PAR DÉFAUT
 // ============================================
 
 export default initializeDatabase;
