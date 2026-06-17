@@ -48,7 +48,15 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - Test de connexion avec ou sans email de test
 - Sauvegarde / suppression de la configuration
 - Configuration pour les services courants (Gmail, Outlook, SendGrid, Mailgun)
-
+### 📝 Configuration OAuth 2.0
+- Créer un projet dans Google Cloud Console
+- Activer l'API Gmail
+- Créer des credentials (OAuth 2.0 Client ID)
+- Configurer les scopes : https://www.googleapis.com/auth/gmail.send
+- Ajouter l'URI de redirection : urn:ietf:wg:oauth:2.0:oob
+- Copier Client ID et Client Secret dans l'interface
+- Obtenir l'URL d'autorisation et autoriser l'accès
+- Échanger le code contre des tokens
 ## 🚀 Installation
 
 ### Prérequis
