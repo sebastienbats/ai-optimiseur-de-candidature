@@ -1,6 +1,6 @@
 # 🎯 AI – Optimiseur de candidature
 
-Application full-stack avec authentification sécurisée, gestion des clés API personnelles, interface d'administration complète, et intégration Claude API.
+Application full-stack avec authentification sécurisée, gestion multi‑fournisseurs d’IA, système de fallback automatique, et interface d’administration complète.
 
 ## ✨ Fonctionnalités
 ### 🔐 Authentification & multi‑utilisateurs
