@@ -18,7 +18,15 @@ const fullToolPrompts = {
   interview: (cv, offer) => `Offre d'emploi :\n${offer}\n\nMon CV :\n${cv}\n\nDonne-moi les 10 questions qu'ils sont le plus susceptibles de poser en entretien. Pour chacune, rédige la réponse en utilisant ma véritable expérience tirée de mon CV. Inclus la question piège conçue pour me déstabiliser et comment y répondre.`
 };
 
-export default function ToolsPanel({ cvText, offerText, results, setResults }) {
+export default function ToolsPanel({ 
+  cvText, 
+  offerText, 
+  results, 
+  setResults,
+  selectedProvider = 'gemini',
+  selectedModel = null,
+  autoFallback = true
+}) {
   const [loading, setLoading] = useState(null);
 
   const handleToolClick = async (tool) => {
@@ -42,11 +50,18 @@ export default function ToolsPanel({ cvText, offerText, results, setResults }) {
     }
 
     try {
-      const response = await api.post('/documents/claude', { prompt });
+      // Utiliser la nouvelle route unifiée
+      const response = await api.post('/documents/ai/call', {
+        prompt,
+        preferredProvider: selectedProvider,
+        model: selectedModel || undefined,
+        autoFallback
+      });
       setResults(prev => ({ ...prev, [tool.name]: response.data.response }));
     } catch (error) {
       console.error(error);
-      alert(error.response?.data?.error || 'Erreur lors de l\'appel à Claude. Vérifiez votre clé API.');
+      const msg = error.response?.data?.error || 'Erreur lors de l\'appel IA. Vérifiez vos clés API.';
+      alert(msg);
     } finally {
       setLoading(null);
     }
