@@ -75,6 +75,7 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - Allez dans API et services → Identifiants
 - Cliquez sur "Créer des identifiants" → "ID client OAuth"
 - Choisissez le type d'application :
+  
 🖥️ Pour le mode test (OOB) - Déprécié mais fonctionne en test
 ```text
 Type : Application de bureau
