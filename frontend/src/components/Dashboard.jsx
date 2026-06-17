@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import CVForm from './CVForm';
 import ToolsPanel from './ToolsPanel';
 import ApiKeyInput from './ApiKeyInput';
+import AiProviderSelector from './AiProviderSelector';
 import { useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
@@ -11,6 +12,9 @@ export default function Dashboard() {
   const [cvText, setCvText] = useState('');
   const [offerText, setOfferText] = useState('');
   const [results, setResults] = useState({});
+  const [selectedProvider, setSelectedProvider] = useState('gemini');
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [autoFallback, setAutoFallback] = useState(true);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
@@ -44,7 +48,19 @@ export default function Dashboard() {
 
         <ApiKeyInput />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+        {/* Nouveau sélecteur de provider IA */}
+        <div className="mt-4">
+          <AiProviderSelector
+            selectedProvider={selectedProvider}
+            selectedModel={selectedModel}
+            onProviderChange={setSelectedProvider}
+            onModelChange={setSelectedModel}
+            autoFallback={autoFallback}
+            onFallbackChange={setAutoFallback}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
           <CVForm
             cvText={cvText}
             setCvText={setCvText}
@@ -56,6 +72,9 @@ export default function Dashboard() {
             offerText={offerText}
             results={results}
             setResults={setResults}
+            selectedProvider={selectedProvider}
+            selectedModel={selectedModel}
+            autoFallback={autoFallback}
           />
         </div>
 
