@@ -35,7 +35,6 @@ router.get('/config', async (req, res) => {
       return res.status(404).json({ error: 'Aucune configuration SMTP trouvée' });
     }
     
-    // Ne pas renvoyer les données sensibles
     const { pass, refresh_token, access_token, ...safeConfig } = config;
     res.json(safeConfig);
   } catch (error) {
@@ -61,7 +60,7 @@ router.post('/config', async (req, res) => {
     } = req.body;
     const adminId = req.userId;
     
-    console.log('📧 Sauvegarde configuration SMTP:', { host, port, auth_type, from });
+    console.log('📧 Sauvegarde configuration SMTP:', { host, port, secure, auth_type, from });
     
     // Validation selon le type d'authentification
     if (auth_type === 'password') {
@@ -99,7 +98,6 @@ router.post('/config', async (req, res) => {
       redirect_uri: redirect_uri || 'urn:ietf:wg:oauth:2.0:oob'
     });
     
-    // Si OAuth, réinitialiser PKCE après la sauvegarde
     if (auth_type === 'oauth2') {
       resetPKCE();
       console.log('🔄 PKCE réinitialisé après sauvegarde OAuth');
@@ -123,7 +121,7 @@ router.post('/config', async (req, res) => {
   }
 });
 
-// Tester la configuration SMTP
+// Tester la configuration SMTP (CORRIGÉ)
 router.post('/test', async (req, res) => {
   try {
     const { host, port, secure, user, pass, from, testEmail, auth_type = 'password' } = req.body;
@@ -132,18 +130,16 @@ router.post('/test', async (req, res) => {
     console.log(`🔍 Test configuration ${auth_type}...`);
     
     if (auth_type === 'oauth2') {
-      // Vérifier que la configuration est complète
+      // Test OAuth 2.0
       const isComplete = await isConfigurationComplete();
       if (!isComplete) {
         return res.status(400).json({ 
           error: 'Configuration OAuth 2.0 incomplète',
-          details: 'Veuillez configurer Client ID, Client Secret et Redirect URI dans l\'interface d\'administration.',
+          details: 'Veuillez configurer Client ID, Client Secret et Redirect URI',
           solution: '1. Remplissez Client ID, Client Secret et Redirect URI\n2. Sauvegardez la configuration\n3. Générez l\'URL d\'autorisation\n4. Échangez le code'
         });
       }
 
-      // Test OAuth 2.0 avec PKCE
-      console.log('🔄 Vérification de l\'authentification OAuth...');
       const result = await verifyOAuth2Config();
       
       if (!result.valid) {
@@ -156,7 +152,6 @@ router.post('/test', async (req, res) => {
       
       console.log('✅ Authentification OAuth valide');
       
-      // Envoyer un email de test
       if (testEmail) {
         try {
           console.log(`📧 Envoi d'un email de test à ${testEmail}...`);
@@ -172,16 +167,14 @@ router.post('/test', async (req, res) => {
                <li>From : ${from}</li>
                <li>Authentification : OAuth 2.0</li>
                <li>PKCE : Activé ✅</li>
-             </ul>
-             <p>Votre configuration SMTP fonctionne parfaitement !</p>`
+             </ul>`
           );
           console.log('✅ Email de test envoyé avec succès');
         } catch (emailError) {
           console.error('❌ Erreur envoi email de test:', emailError);
           return res.status(500).json({ 
             error: 'Erreur lors de l\'envoi de l\'email de test',
-            details: emailError.message,
-            solution: 'Vérifiez que le compte Gmail est correct et que les tokens OAuth sont valides'
+            details: emailError.message
           });
         }
       }
@@ -200,7 +193,7 @@ router.post('/test', async (req, res) => {
       });
       
     } else {
-      // Test SMTP standard (password)
+      // Test SMTP standard (password) - CORRIGÉ
       if (!host || !port || !user || !pass || !from) {
         return res.status(400).json({ 
           error: 'Tous les champs sont requis pour le test' 
@@ -208,27 +201,64 @@ router.post('/test', async (req, res) => {
       }
       
       console.log('🔄 Test de connexion SMTP...');
+      console.log(`📧 Configuration: ${host}:${port}, secure: ${secure}`);
       
-      const transporter = nodemailer.createTransport({
-        host,
+      // Configuration du transporteur avec gestion SSL/TLS
+      const transporterConfig = {
+        host: host,
         port: parseInt(port),
         secure: secure === true || secure === 'true',
         auth: {
-          user,
-          pass
+          user: user,
+          pass: pass
         },
-        connectionTimeout: 5000,
-        greetingTimeout: 5000,
-        socketTimeout: 5000
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+        tls: {
+          rejectUnauthorized: false // Pour certains serveurs auto-signés
+        }
+      };
+
+      // Configuration spécifique pour Gmail
+      if (host.includes('gmail.com')) {
+        console.log('📧 Configuration Gmail détectée');
+        if (parseInt(port) === 465) {
+          transporterConfig.secure = true; // SSL
+          console.log('🔒 Port 465: SSL activé');
+        } else if (parseInt(port) === 587) {
+          transporterConfig.secure = false; // STARTTLS
+          transporterConfig.requireTLS = true;
+          console.log('🔒 Port 587: STARTTLS activé');
+        }
+      }
+
+      // Pour les autres serveurs
+      if (parseInt(port) === 465) {
+        transporterConfig.secure = true;
+      } else if (parseInt(port) === 587) {
+        transporterConfig.secure = false;
+        transporterConfig.requireTLS = true;
+      }
+
+      console.log('📋 Configuration finale:', {
+        host: transporterConfig.host,
+        port: transporterConfig.port,
+        secure: transporterConfig.secure,
+        requireTLS: transporterConfig.requireTLS || false
       });
+
+      const transporter = nodemailer.createTransport(transporterConfig);
       
+      // Vérifier la connexion
       await transporter.verify();
       console.log('✅ Connexion SMTP réussie');
       
+      // Envoyer un email de test
       if (testEmail) {
         console.log(`📧 Envoi d'un email de test à ${testEmail}...`);
         await transporter.sendMail({
-          from,
+          from: from,
           to: testEmail,
           subject: 'Test SMTP - AI Optimiseur',
           html: `<h2>✅ Test SMTP réussi</h2>
@@ -237,6 +267,7 @@ router.post('/test', async (req, res) => {
                  <ul>
                    <li>Hôte : ${host}</li>
                    <li>Port : ${port}</li>
+                   <li>SSL/TLS : ${secure ? 'Activé' : 'Désactivé (STARTTLS)'}</li>
                    <li>From : ${from}</li>
                    <li>Authentification : Mot de passe</li>
                  </ul>`
@@ -254,15 +285,48 @@ router.post('/test', async (req, res) => {
       
       res.json({ 
         success: true, 
-        message: testEmail ? 'Email de test envoyé avec succès' : 'Connexion SMTP réussie' 
+        message: testEmail ? '✅ Email de test envoyé avec succès' : '✅ Connexion SMTP réussie' 
       });
     }
   } catch (error) {
     console.error('❌ Erreur test SMTP:', error);
+    
+    // Messages d'erreur plus précis
+    let errorMessage = 'Erreur de connexion SMTP';
+    let solution = 'Vérifiez vos identifiants et paramètres de connexion';
+    let details = error.message;
+    
+    if (error.message.includes('wrong version number')) {
+      errorMessage = 'Erreur SSL/TLS - Version SSL incorrecte';
+      solution = 'Vérifiez la configuration SSL/TLS:\n- Port 465 → secure: true\n- Port 587 → secure: false (STARTTLS)';
+      details = 'Le serveur n\'utilise pas le protocole SSL/TLS attendu. Vérifiez le port et l\'option secure.';
+    } else if (error.message.includes('ETIMEDOUT') || error.message.includes('timeout')) {
+      errorMessage = 'Timeout de connexion';
+      solution = 'Vérifiez que le serveur SMTP est accessible depuis votre réseau.';
+      details = 'Le serveur ne répond pas. Vérifiez le pare-feu et les paramètres réseau.';
+    } else if (error.message.includes('ECONNREFUSED')) {
+      errorMessage = 'Connexion refusée';
+      solution = 'Vérifiez que le serveur SMTP est en ligne et que le port est correct.';
+      details = 'Le serveur a refusé la connexion. Vérifiez le host et le port.';
+    } else if (error.message.includes('Authentication failed')) {
+      errorMessage = 'Échec de l\'authentification';
+      solution = 'Vérifiez votre email et mot de passe.\n- Pour Gmail: utilisez un "Mot de passe d\'application"';
+      details = 'Identifiants incorrects. Vérifiez que vous utilisez les bons identifiants.';
+    } else if (error.message.includes('self signed certificate')) {
+      errorMessage = 'Certificat auto-signé';
+      solution = 'Pour les serveurs avec certificats auto-signés, le système accepte automatiquement les certificats.';
+      details = 'Certificat non valide. Vérifiez la configuration TLS.';
+    }
+    
     res.status(500).json({ 
-      error: 'Erreur de connexion SMTP',
-      details: error.message,
-      solution: 'Vérifiez vos identifiants et paramètres de connexion'
+      error: errorMessage,
+      details: details,
+      solution: solution,
+      config: {
+        host,
+        port,
+        secure: secure === true || secure === 'true'
+      }
     });
   }
 });
@@ -276,7 +340,6 @@ router.get('/oauth/auth-url', async (req, res) => {
   try {
     console.log('🔐 Génération URL OAuth...');
     
-    // 1. Vérifier que la configuration existe
     const smtpConfig = new SmtpConfig(db);
     const config = await smtpConfig.get();
     
@@ -295,7 +358,6 @@ router.get('/oauth/auth-url', async (req, res) => {
       hasRedirectUri: !!config.redirect_uri
     });
 
-    // 2. Vérifier le type d'authentification
     if (config.auth_type !== 'oauth2') {
       return res.status(400).json({ 
         error: 'Le type d\'authentification n\'est pas OAuth 2.0',
@@ -304,12 +366,11 @@ router.get('/oauth/auth-url', async (req, res) => {
       });
     }
 
-    // 3. Vérifier que les credentials sont présents
     if (!config.client_id) {
       return res.status(400).json({ 
         error: 'Client ID manquant',
         details: 'Le Client ID est requis pour l\'authentification OAuth 2.0',
-        solution: '1. Obtenez votre Client ID depuis Google Cloud Console\n2. API et services → Identifiants → ID client OAuth 2.0'
+        solution: 'Obtenez votre Client ID depuis Google Cloud Console'
       });
     }
 
@@ -317,11 +378,10 @@ router.get('/oauth/auth-url', async (req, res) => {
       return res.status(400).json({ 
         error: 'Client Secret manquant',
         details: 'Le Client Secret est requis pour l\'authentification OAuth 2.0',
-        solution: '1. Obtenez votre Client Secret depuis Google Cloud Console\n2. API et services → Identifiants → Afficher le secret'
+        solution: 'Obtenez votre Client Secret depuis Google Cloud Console'
       });
     }
 
-    // 4. Vérifier le Redirect URI
     if (!config.redirect_uri) {
       return res.status(400).json({ 
         error: 'Redirect URI manquant',
@@ -332,10 +392,8 @@ router.get('/oauth/auth-url', async (req, res) => {
 
     console.log('✅ Credentials vérifiés, génération du challenge PKCE...');
 
-    // 5. Réinitialiser l'état PKCE
     resetPKCE();
     
-    // 6. Générer l'URL
     const url = await getAuthUrl();
     const pkceStatus = getPKCEStatus();
     
@@ -355,47 +413,33 @@ router.get('/oauth/auth-url', async (req, res) => {
   } catch (error) {
     console.error('❌ Erreur génération URL OAuth:', error);
     
-    // Messages d'erreur plus précis
     let errorMessage = 'Erreur lors de la génération de l\'URL d\'autorisation';
     let solution = 'Vérifiez votre configuration';
     let details = error.message;
     
     if (error.message.includes('Configuration SMTP non trouvée')) {
       errorMessage = 'Configuration SMTP non trouvée';
-      solution = 'Sauvegardez d\'abord une configuration avec OAuth 2.0 dans l\'interface d\'administration';
-      details = 'Aucune configuration SMTP n\'existe en base de données';
+      solution = 'Sauvegardez d\'abord une configuration avec OAuth 2.0';
     } else if (error.message.includes('Client ID')) {
       errorMessage = 'Client ID invalide ou manquant';
-      solution = 'Vérifiez que vous avez copié le Client ID correctement depuis la Google Cloud Console';
-      details = 'Le Client ID ne doit pas être vide et doit être au format correct (ex: xxx.apps.googleusercontent.com)';
+      solution = 'Vérifiez que vous avez copié le Client ID correctement';
     } else if (error.message.includes('Client Secret')) {
       errorMessage = 'Client Secret invalide ou manquant';
-      solution = 'Vérifiez que vous avez copié le Client Secret correctement depuis la Google Cloud Console';
-      details = 'Le Client Secret doit commencer par "GOCSPX-"';
+      solution = 'Vérifiez que vous avez copié le Client Secret correctement';
     } else if (error.message.includes('redirect')) {
       errorMessage = 'Redirect URI invalide';
       solution = 'Vérifiez que le Redirect URI correspond à celui enregistré dans la Google Cloud Console';
-      details = 'Le Redirect URI doit être "urn:ietf:wg:oauth:2.0:oob" ou une URL HTTPS valide';
-    } else if (error.message.includes('API non activée')) {
-      errorMessage = 'Gmail API non activée';
-      solution = 'Activez la Gmail API dans la Google Cloud Console (API et services → Bibliothèque)';
-      details = 'L\'API Gmail doit être activée pour utiliser OAuth 2.0';
-    } else if (error.message.includes('consent screen')) {
-      errorMessage = 'Écran de consentement OAuth non configuré';
-      solution = 'Configurez l\'écran de consentement OAuth dans la Google Cloud Console';
-      details = 'L\'écran de consentement doit être configuré avec les scopes gmail.send et gmail.compose';
     }
     
     res.status(500).json({ 
       error: errorMessage,
       details: details,
-      solution: solution,
-      suggestion: 'Vérifiez les logs du serveur pour plus de détails'
+      solution: solution
     });
   }
 });
 
-// Échanger le code d'autorisation OAuth contre des tokens (avec PKCE)
+// Échanger le code d'autorisation OAuth contre des tokens
 router.post('/oauth/exchange', async (req, res) => {
   try {
     const { code } = req.body;
@@ -411,7 +455,6 @@ router.post('/oauth/exchange', async (req, res) => {
       });
     }
     
-    // Vérifier la longueur du code
     if (code.length < 10) {
       return res.status(400).json({ 
         error: 'Code d\'autorisation invalide',
@@ -455,16 +498,13 @@ router.post('/oauth/exchange', async (req, res) => {
     
     if (error.message.includes('PKCE verifier')) {
       errorMessage = 'Verifier PKCE manquant ou expiré';
-      solution = 'Générez une nouvelle URL d\'autorisation (le verifier est automatiquement généré)';
+      solution = 'Générez une nouvelle URL d\'autorisation';
     } else if (error.message.includes('invalid_grant')) {
       errorMessage = 'Code invalide ou expiré';
-      solution = '1. Le code expire après 10 minutes\n2. Générez une nouvelle URL\n3. Obtenez un nouveau code\n4. Réessayez';
+      solution = '1. Le code expire après 10 minutes\n2. Générez une nouvelle URL\n3. Obtenez un nouveau code';
     } else if (error.message.includes('redirect_uri')) {
       errorMessage = 'Redirect URI ne correspond pas';
       solution = 'Vérifiez que le Redirect URI configuré correspond à celui de la Google Cloud Console';
-    } else if (error.message.includes('client_id')) {
-      errorMessage = 'Client ID invalide';
-      solution = 'Vérifiez que le Client ID est correctement configuré';
     }
     
     res.status(500).json({ 
@@ -574,7 +614,6 @@ router.delete('/config', async (req, res) => {
     const smtpConfig = new SmtpConfig(db);
     await smtpConfig.delete();
     
-    // Réinitialiser PKCE
     resetPKCE();
     
     const adminLog = new AdminLog(db);
@@ -595,11 +634,7 @@ router.delete('/config', async (req, res) => {
   }
 });
 
-// ============================================
-// ROUTE POUR LES MODÈLES D'EMAIL
-// ============================================
-
-// Récupérer les modèles d'email (déplacé depuis email.js pour centralisation)
+// Récupérer les modèles d'email
 router.get('/email/templates', async (req, res) => {
   try {
     const templates = [
