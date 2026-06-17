@@ -18,7 +18,9 @@
     "helmet": "^7.1.0",
     "express-rate-limit": "^7.1.5",
     "nodemailer": "^6.9.7",
-    "archiver": "^6.0.1"
+    "archiver": "^6.0.1",
+    "googleapis": "^118.0.0",
+    "google-auth-library": "^8.9.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
