@@ -98,7 +98,7 @@ export async function initializeDatabase() {
       metadata TEXT
     );
 
-    -- Table de configuration SMTP (avec support OAuth 2.0)
+    -- Table de configuration SMTP (avec support OAuth 2.0 et PKCE)
     CREATE TABLE IF NOT EXISTS smtp_config (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       host TEXT,
@@ -177,7 +177,7 @@ export async function initializeDatabase() {
     console.log('✅ Colonne auth_tag ajoutée à user_provider_keys');
   }
 
-  // Vérifier et ajouter les colonnes OAuth à smtp_config
+  // Vérifier et ajouter les colonnes OAuth/PKCE à smtp_config
   const smtpTableInfo = await db.all('PRAGMA table_info(smtp_config)');
   const oauthColumns = [
     'auth_type', 'client_id', 'client_secret', 
@@ -265,6 +265,9 @@ export async function initializeDatabase() {
     
     -- Index pour les clés API (ancien système)
     CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_id ON user_api_keys(user_id);
+    
+    -- Index pour la configuration SMTP
+    CREATE INDEX IF NOT EXISTS idx_smtp_config_auth_type ON smtp_config(auth_type);
   `);
 
   console.log('✅ Base de données initialisée avec succès');
@@ -284,7 +287,7 @@ export async function initializeDatabase() {
   finalTables.forEach(t => console.log(`  - ${t.name}`));
 
   // Vérification spécifique des tables importantes
-  const importantTables = ['users', 'documents', 'user_provider_keys', 'smtp_config', 'admin_logs'];
+  const importantTables = ['users', 'documents', 'user_provider_keys', 'smtp_config', 'admin_logs', 'backup_history'];
   for (const table of importantTables) {
     const check = await db.get(`
       SELECT COUNT(*) as count FROM sqlite_master 
@@ -295,6 +298,42 @@ export async function initializeDatabase() {
     } else {
       console.error(`❌ Table ${table} manquante !`);
     }
+  }
+
+  // ============================================
+  // VÉRIFICATION DE L'INTÉGRITÉ DE LA BASE
+  // ============================================
+
+  try {
+    const integrityCheck = await db.get('PRAGMA integrity_check');
+    if (integrityCheck.integrity_check === 'ok') {
+      console.log('✅ Intégrité de la base de données vérifiée');
+    } else {
+      console.warn('⚠️ Problème d\'intégrité détecté:', integrityCheck.integrity_check);
+    }
+  } catch (error) {
+    console.error('❌ Erreur lors de la vérification d\'intégrité:', error);
+  }
+
+  // ============================================
+  // STATISTIQUES DE LA BASE
+  // ============================================
+
+  try {
+    const stats = await db.get(`
+      SELECT 
+        (SELECT COUNT(*) FROM users) as user_count,
+        (SELECT COUNT(*) FROM documents) as document_count,
+        (SELECT COUNT(*) FROM admin_logs) as log_count,
+        (SELECT COUNT(*) FROM user_provider_keys) as provider_keys_count
+    `);
+    console.log('📊 Statistiques de la base:');
+    console.log(`  - Utilisateurs: ${stats.user_count}`);
+    console.log(`  - Documents: ${stats.document_count}`);
+    console.log(`  - Logs admin: ${stats.log_count}`);
+    console.log(`  - Clés provider: ${stats.provider_keys_count}`);
+  } catch (error) {
+    console.error('❌ Erreur lors de la récupération des statistiques:', error);
   }
 
   return db;
@@ -379,7 +418,7 @@ export const SUPPORTED_PROVIDERS = [
 ];
 
 // ============================================
-// FONCTIONS UTILITAIRES POUR OAuth 2.0
+// FONCTIONS UTILITAIRES POUR OAuth 2.0 ET PKCE
 // ============================================
 
 /**
@@ -434,6 +473,120 @@ export async function isOAuthConfigured(db) {
   } catch (error) {
     console.error('Erreur vérification OAuth:', error);
     return false;
+  }
+}
+
+/**
+ * Récupère la configuration SMTP complète
+ */
+export async function getSmtpConfig(db) {
+  try {
+    return await db.get('SELECT * FROM smtp_config LIMIT 1');
+  } catch (error) {
+    console.error('Erreur récupération config SMTP:', error);
+    return null;
+  }
+}
+
+/**
+ * Sauvegarde ou met à jour la configuration SMTP
+ */
+export async function saveSmtpConfig(db, config) {
+  try {
+    const existing = await db.get('SELECT id FROM smtp_config LIMIT 1');
+    
+    if (existing) {
+      await db.run(`
+        UPDATE smtp_config 
+        SET host = ?, port = ?, secure = ?, user = ?, pass = ?, 
+            from_email = ?, auth_type = ?, client_id = ?, 
+            client_secret = ?, redirect_uri = ?, 
+            refresh_token = ?, access_token = ?, 
+            expiry_date = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [
+        config.host, config.port, config.secure || 0, 
+        config.user || null, config.pass || null,
+        config.from_email, config.auth_type || 'password',
+        config.client_id || null, config.client_secret || null,
+        config.redirect_uri || null,
+        config.refresh_token || null, config.access_token || null,
+        config.expiry_date || null, existing.id
+      ]);
+      return existing.id;
+    } else {
+      const result = await db.run(`
+        INSERT INTO smtp_config 
+        (host, port, secure, user, pass, from_email, 
+         auth_type, client_id, client_secret, redirect_uri,
+         refresh_token, access_token, expiry_date) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        config.host, config.port, config.secure || 0, 
+        config.user || null, config.pass || null, config.from_email,
+        config.auth_type || 'password',
+        config.client_id || null, config.client_secret || null,
+        config.redirect_uri || null,
+        config.refresh_token || null, config.access_token || null,
+        config.expiry_date || null
+      ]);
+      return result.lastID;
+    }
+  } catch (error) {
+    console.error('Erreur sauvegarde config SMTP:', error);
+    throw error;
+  }
+}
+
+/**
+ * Supprime la configuration SMTP
+ */
+export async function deleteSmtpConfig(db) {
+  try {
+    await db.run('DELETE FROM smtp_config');
+    return true;
+  } catch (error) {
+    console.error('Erreur suppression config SMTP:', error);
+    return false;
+  }
+}
+
+// ============================================
+// FONCTIONS POUR LES LOGS ADMIN
+// ============================================
+
+/**
+ * Ajoute un log administrateur
+ */
+export async function addAdminLog(db, adminId, action, details = null, ipAddress = null) {
+  try {
+    await db.run(
+      `INSERT INTO admin_logs (admin_id, action, details, ip_address) 
+       VALUES (?, ?, ?, ?)`,
+      [adminId, action, details ? JSON.stringify(details) : null, ipAddress]
+    );
+    return true;
+  } catch (error) {
+    console.error('Erreur ajout log admin:', error);
+    return false;
+  }
+}
+
+/**
+ * Récupère les logs administrateur
+ */
+export async function getAdminLogs(db, limit = 100, offset = 0) {
+  try {
+    return await db.all(`
+      SELECT l.*, u.email as admin_email 
+      FROM admin_logs l
+      JOIN users u ON u.id = l.admin_id
+      ORDER BY l.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [limit, offset]);
+  } catch (error) {
+    console.error('Erreur récupération logs admin:', error);
+    return [];
   }
 }
 
