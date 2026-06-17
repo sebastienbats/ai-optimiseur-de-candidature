@@ -53,6 +53,7 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - ✅ Pas de mot de passe stocké en base
 - ✅ Configuration via Google Cloud Console
 - ✅ Assurez-vous que tous les champs sont remplis :
+  
 |Champ|Statut|Exemple|
 |-----|------|-------|
 |Serveur SMTP|✅ Doit être rempli|smtp.gmail.com|
@@ -63,6 +64,7 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 |Redirect URI|✅ Doit être rempli|urn:ietf:wg:oauth:2.0:oob|
 |Email d'envoi|✅ Doit être rempli|votre.email@gmail.com|
 ⚠️ Si un de ces champs est vide, l'URL ne peut pas être générée.
+
 ##### 🏗️ Configuration dans Google Cloud Console
 1. Activer l'API Gmail
 - Allez sur Google Cloud Console
@@ -194,7 +196,7 @@ server {
 ## 📡 API
 - Toutes les routes sont préfixées par /api.
 ### Authentification (public)
-|Méthode|	Route|Description|
+|Méthode|Route|Description|
 |-------|------|-----------|
 |POST|/auth/register|Inscription|
 |POST|/auth/login|Connexion|
@@ -214,8 +216,8 @@ server {
 |GET|/documents/providers|Liste des providers supportés|
 |GET|/documents/stats|Statistiques des documents|
 ### Administration (authentifié + admin)
-|Méthode|	Route	|Description|
-|-------|-------|-----------|
+|Méthode|Route|Description|
+|-------|-----|-----------|
 |GET|/admin/users|Liste des utilisateurs|
 |GET|/admin/users/stats|Statistiques|
 |PATCH|/admin/users/:id/toggle|Activer/désactiver|
