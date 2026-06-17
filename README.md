@@ -69,33 +69,29 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - Node.js (v18+)
 - npm
 
-1. **Cloner le dépôt**
-   ```bash
+1. ```bash
+   # **Cloner le dépôt**
    git clone https://github.com/sebastienbats/ai-optimiseur-de-candidature.git
    cd ai-optimiseur-de-candidature
-   ```
-2. **Installez les dépendances** :
-   ```bash
+   # **Installez les dépendances**
    cd backend && npm install
    cd ../frontend && npm install
    cd ..
+   # **Configurez les variables d'environnement**
+   cp backend/.env.example backend/.env
+   cp frontend/.env.example frontend/.env
+   # Générez une clé de chiffrement
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    ```
-3. Configurez les variables d'environnement :
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-# Générez une clé de chiffrement
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-4. Lancez l'application :
-```bash
-# Terminal 1 - Backend
-cd backend && npm run dev
-# Terminal 2 - Frontend
-cd frontend && npm run dev
-```
-5. Accédez à http://localhost:5173
-6. Connectez-vous avec admin@example.com / admin123
+2. Lancez l'application :
+   ```bash
+   # Terminal 1 - Backend
+   cd backend && npm run dev
+   # Terminal 2 - Frontend
+   cd frontend && npm run dev
+   ```
+3. Accédez à http://localhost:5173
+4. Connectez-vous avec admin@example.com / admin123
  
 ## 🔑 Accès Administrateur
 Par défaut :
