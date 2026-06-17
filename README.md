@@ -47,7 +47,7 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - ✅ Compatibilité avec tous les serveurs SMTP
 - ✅ Simple à configurer
 - ⚠️ Moins sécurisé que OAuth 2.0
-#### Authentification SMTP OAuth 2.0 + PKCE
+#### 📧 Authentification SMTP OAuth 2.0 + PKCE
 - ✅ Sécurisé et moderne
 - ✅ Rafraîchissement automatique des tokens
 - ✅ Pas de mot de passe stocké en base
