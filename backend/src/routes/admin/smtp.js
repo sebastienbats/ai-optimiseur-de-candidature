@@ -3,7 +3,14 @@ import nodemailer from 'nodemailer';
 import { SmtpConfig } from '../../models/SmtpConfig.js';
 import { AdminLog } from '../../models/AdminLog.js';
 import { initializeDatabase } from '../../database.js';
-import { oauth2Service, getAuthUrl, exchangeOAuthCode, verifyOAuth2Config } from '../../services/oauth2Service.js';
+import { 
+  oauth2Service, 
+  getAuthUrl, 
+  exchangeOAuthCode, 
+  verifyOAuth2Config,
+  getPKCEStatus,
+  resetPKCE
+} from '../../services/oauth2Service.js';
 import { sendEmail } from '../../services/emailService.js';
 
 const router = express.Router();
@@ -17,7 +24,7 @@ let db;
 // CONFIGURATION SMTP (PASSWORD)
 // ============================================
 
-// Sauvegarder la configuration SMTP (password)
+// Sauvegarder la configuration SMTP
 router.post('/config', async (req, res) => {
   try {
     const { 
@@ -27,7 +34,10 @@ router.post('/config', async (req, res) => {
       user, 
       pass, 
       from,
-      auth_type = 'password'
+      auth_type = 'password',
+      client_id = null,
+      client_secret = null,
+      redirect_uri = null
     } = req.body;
     const adminId = req.userId;
     
@@ -39,9 +49,9 @@ router.post('/config', async (req, res) => {
         });
       }
     } else if (auth_type === 'oauth2') {
-      if (!host || !port || !from) {
+      if (!host || !port || !from || !client_id || !client_secret) {
         return res.status(400).json({ 
-          error: 'Pour OAuth 2.0: host, port et from sont requis' 
+          error: 'Pour OAuth 2.0: host, port, from, client_id et client_secret sont requis' 
         });
       }
     } else {
@@ -57,10 +67,15 @@ router.post('/config', async (req, res) => {
       pass: pass || null,
       from,
       auth_type,
-      client_id: req.body.client_id || null,
-      client_secret: req.body.client_secret || null,
-      redirect_uri: req.body.redirect_uri || null
+      client_id,
+      client_secret,
+      redirect_uri: redirect_uri || 'urn:ietf:wg:oauth:2.0:oob'
     });
+    
+    // Si OAuth, réinitialiser PKCE après la sauvegarde
+    if (auth_type === 'oauth2') {
+      resetPKCE();
+    }
     
     const adminLog = new AdminLog(db);
     await adminLog.create(
@@ -80,14 +95,14 @@ router.post('/config', async (req, res) => {
   }
 });
 
-// Tester la configuration SMTP (password)
+// Tester la configuration SMTP
 router.post('/test', async (req, res) => {
   try {
     const { host, port, secure, user, pass, from, testEmail, auth_type = 'password' } = req.body;
     const adminId = req.userId;
     
     if (auth_type === 'oauth2') {
-      // Test OAuth 2.0
+      // Test OAuth 2.0 avec PKCE
       const result = await verifyOAuth2Config();
       if (!result.valid) {
         return res.status(401).json({ 
@@ -99,15 +114,16 @@ router.post('/test', async (req, res) => {
       if (testEmail) {
         await oauth2Service.sendEmail(
           testEmail,
-          'Test OAuth 2.0 - AI Optimiseur',
-          `<h2>✅ Test OAuth 2.0 réussi</h2>
-           <p>Ceci est un email de test envoyé avec OAuth 2.0.</p>
+          'Test OAuth 2.0 + PKCE - AI Optimiseur',
+          `<h2>✅ Test OAuth 2.0 avec PKCE réussi</h2>
+           <p>Ceci est un email de test envoyé avec OAuth 2.0 et PKCE.</p>
            <p>Configuration :</p>
            <ul>
              <li>Hôte : ${host}</li>
              <li>Port : ${port}</li>
              <li>From : ${from}</li>
              <li>Authentification : OAuth 2.0</li>
+             <li>PKCE : Activé ✅</li>
            </ul>`
         );
       }
@@ -122,7 +138,7 @@ router.post('/test', async (req, res) => {
       
       res.json({ 
         success: true, 
-        message: '✅ Authentification OAuth 2.0 réussie' 
+        message: '✅ Authentification OAuth 2.0 réussie (PKCE activé)' 
       });
       
     } else {
@@ -187,21 +203,36 @@ router.post('/test', async (req, res) => {
 });
 
 // ============================================
-// ROUTES OAuth 2.0 SPÉCIFIQUES
+// ROUTES OAuth 2.0 avec PKCE
 // ============================================
 
-// Obtenir l'URL d'autorisation OAuth 2.0
+// Obtenir l'URL d'autorisation OAuth 2.0 avec PKCE
 router.get('/oauth/auth-url', async (req, res) => {
   try {
+    // Réinitialiser l'état PKCE avant de générer une nouvelle URL
+    resetPKCE();
+    
     const url = await getAuthUrl();
-    res.json({ url });
+    const pkceStatus = getPKCEStatus();
+    
+    res.json({ 
+      url,
+      pkce: {
+        enabled: true,
+        method: 'S256',
+        status: pkceStatus
+      }
+    });
   } catch (error) {
     console.error('Erreur génération URL OAuth:', error);
-    res.status(500).json({ error: 'Erreur lors de la génération de l\'URL d\'autorisation' });
+    res.status(500).json({ 
+      error: 'Erreur lors de la génération de l\'URL d\'autorisation',
+      details: error.message
+    });
   }
 });
 
-// Échanger le code d'autorisation OAuth contre des tokens
+// Échanger le code d'autorisation OAuth contre des tokens (avec PKCE)
 router.post('/oauth/exchange', async (req, res) => {
   try {
     const { code } = req.body;
@@ -217,13 +248,16 @@ router.post('/oauth/exchange', async (req, res) => {
     await adminLog.create(
       adminId,
       'OAUTH_EXCHANGE_COMPLETED',
-      { success: true },
+      { 
+        success: true,
+        pkceEnabled: true
+      },
       req.ip
     );
     
     res.json({ 
       success: true, 
-      message: 'Tokens OAuth obtenus avec succès',
+      message: 'Tokens OAuth obtenus avec succès (PKCE)',
       tokens: {
         access_token: tokens.access_token ? '***' : null,
         refresh_token: tokens.refresh_token ? '***' : null,
@@ -232,7 +266,10 @@ router.post('/oauth/exchange', async (req, res) => {
     });
   } catch (error) {
     console.error('Erreur échange code OAuth:', error);
-    res.status(500).json({ error: 'Erreur lors de l\'échange du code OAuth' });
+    res.status(500).json({ 
+      error: 'Erreur lors de l\'échange du code OAuth',
+      details: error.message
+    });
   }
 });
 
@@ -243,21 +280,42 @@ router.get('/oauth/status', async (req, res) => {
     const isConfigured = await smtpConfig.isOAuthConfigured();
     let status = 'not_configured';
     let details = null;
+    let pkceStatus = null;
     
     if (isConfigured) {
       const result = await verifyOAuth2Config();
       status = result.valid ? 'valid' : 'invalid';
       details = result.error || null;
+      pkceStatus = getPKCEStatus();
     }
     
     res.json({ 
       status,
       isConfigured,
-      details
+      details,
+      pkce: {
+        enabled: true,
+        method: 'S256',
+        status: pkceStatus
+      }
     });
   } catch (error) {
     console.error('Erreur vérification statut OAuth:', error);
     res.status(500).json({ error: 'Erreur lors de la vérification' });
+  }
+});
+
+// Réinitialiser l'état PKCE
+router.post('/oauth/reset-pkce', async (req, res) => {
+  try {
+    resetPKCE();
+    res.json({ 
+      success: true, 
+      message: 'État PKCE réinitialisé avec succès' 
+    });
+  } catch (error) {
+    console.error('Erreur réinitialisation PKCE:', error);
+    res.status(500).json({ error: 'Erreur lors de la réinitialisation' });
   }
 });
 
@@ -267,6 +325,9 @@ router.delete('/config', async (req, res) => {
     const adminId = req.userId;
     const smtpConfig = new SmtpConfig(db);
     await smtpConfig.delete();
+    
+    // Réinitialiser PKCE
+    resetPKCE();
     
     const adminLog = new AdminLog(db);
     await adminLog.create(
