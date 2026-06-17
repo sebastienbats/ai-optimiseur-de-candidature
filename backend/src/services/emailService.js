@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { SmtpConfig } from '../models/SmtpConfig.js';
 import { initializeDatabase } from '../database.js';
+import { oauth2Service } from './oauth2Service.js';
 
 let transporter = null;
 let db;
@@ -18,6 +19,12 @@ export async function initializeEmail() {
     return null;
   }
 
+  // Si OAuth 2.0, utiliser le service OAuth
+  if (config.auth_type === 'oauth2') {
+    return oauth2Service;
+  }
+
+  // Sinon, SMTP standard avec mot de passe
   if (!transporter) {
     transporter = nodemailer.createTransport({
       host: config.host,
@@ -35,19 +42,26 @@ export async function initializeEmail() {
 
 export async function sendEmail(to, subject, html, text = null) {
   try {
-    const transporter = await initializeEmail();
+    const mailer = await initializeEmail();
     
-    if (!transporter) {
+    if (!mailer) {
       console.log('📧 SMTP non configuré - Email simulé:', { to, subject });
       return { messageId: 'simulated-' + Date.now() };
     }
-    
+
     const config = await new SmtpConfig(db).get();
-    
+    const from = config.from_email;
+
+    // Si c'est le service OAuth 2.0
+    if (mailer.oauth2Client) {
+      return mailer.sendEmail(to, subject, html, text);
+    }
+
+    // SMTP standard
     const info = await transporter.sendMail({
-      from: config.from_email,
+      from,
       to,
-      subject: `[AI Optimiseur] ${subject}`,
+      subject,
       text: text || html.replace(/<[^>]*>/g, ''),
       html
     });
@@ -66,8 +80,8 @@ export async function sendBulkEmail(recipients, subject, message, batchSize = 10
     errors: []
   };
   
-  const transporter = await initializeEmail();
-  if (!transporter) {
+  const mailer = await initializeEmail();
+  if (!mailer) {
     results.success = recipients.length;
     console.log(`📧 Simulation d'envoi à ${recipients.length} destinataires`);
     return results;
