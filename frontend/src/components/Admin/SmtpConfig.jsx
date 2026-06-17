@@ -288,7 +288,8 @@ export default function SmtpConfig() {
             <p><strong>SendGrid :</strong> smtp.sendgrid.net, port 587, STARTTLS</p>
             <p><strong>Mailgun :</strong> smtp.mailgun.org, port 587, STARTTLS</p>
             <p className="mt-2 text-yellow-600">
-              ⚠️ Pour Gmail, utilisez un "Mot de passe d'application" (Paramètres > Sécurité > Mots de passe d'application)
+              ⚠️ Pour Gmail, utilisez un &quot;Mot de passe d'application&quot; 
+              (Paramètres {'>'} Sécurité {'>'} Mots de passe d'application)
             </p>
           </div>
         </div>
