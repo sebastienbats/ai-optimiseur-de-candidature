@@ -43,12 +43,13 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - Utiliser des modèles prédéfinis (Bienvenue, Newsletter, Inactif, Maintenance)
 - Personnaliser le sujet et le contenu
 - Utiliser [NOM] dans le message pour personnaliser par utilisateur
-#### 📨 Configuration SMTP
-- Paramètres du serveur mail : hôte, port, SSL/TLS, identifiants, email d’expéditeur
-- Test de connexion avec ou sans email de test
-- Sauvegarde / suppression de la configuration
-- Configuration pour les services courants (Gmail, Outlook, SendGrid, Mailgun)
-### 📝 Configuration OAuth 2.0
+#### 📧 Authentification SMTP
+##### OAuth 2.0 (Recommandé pour Gmail)
+- ✅ Sécurisé et moderne
+- ✅ Rafraîchissement automatique des tokens
+- ✅ Pas de mot de passe stocké en base
+- ✅ Configuration via Google Cloud Console
+###### 📝 Configuration OAuth 2.0
 - Créer un projet dans Google Cloud Console
 - Activer l'API Gmail
 - Créer des credentials (OAuth 2.0 Client ID)
@@ -57,6 +58,11 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - Copier Client ID et Client Secret dans l'interface
 - Obtenir l'URL d'autorisation et autoriser l'accès
 - Échanger le code contre des tokens
+##### Authentification par mot de passe
+- ✅ Compatibilité avec tous les serveurs SMTP
+- ✅ Simple à configurer
+- ⚠️ Moins sécurisé que OAuth 2.0
+
 ## 🚀 Installation
 
 ### Prérequis
