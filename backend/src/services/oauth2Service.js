@@ -1,717 +1,545 @@
-import express from 'express';
-import nodemailer from 'nodemailer';
-import { SmtpConfig } from '../../models/SmtpConfig.js';
-import { AdminLog } from '../../models/AdminLog.js';
-import { initializeDatabase } from '../../database.js';
-import { 
-  oauth2Service, 
-  getAuthUrl, 
-  exchangeOAuthCode, 
-  verifyOAuth2Config,
-  getPKCEStatus,
-  resetPKCE,
-  isConfigurationComplete
-} from '../../services/oauth2Service.js';
-import { sendEmail } from '../../services/emailService.js';
+import { google } from 'googleapis';
+import { OAuth2Client } from 'google-auth-library';
+import crypto from 'crypto';
+import { SmtpConfig } from '../models/SmtpConfig.js';
+import { initializeDatabase } from '../database.js';
 
-const router = express.Router();
 let db;
 
 (async () => {
   db = await initializeDatabase();
 })();
 
-// ============================================
-// ROUTES DE CONFIGURATION SMTP
-// ============================================
-
-// Récupérer la configuration SMTP
-router.get('/config', async (req, res) => {
-  try {
-    const smtpConfig = new SmtpConfig(db);
-    const config = await smtpConfig.get();
-    
-    if (!config) {
-      return res.status(404).json({ error: 'Aucune configuration SMTP trouvée' });
-    }
-    
-    const { pass, refresh_token, access_token, ...safeConfig } = config;
-    res.json(safeConfig);
-  } catch (error) {
-    console.error('Erreur récupération config:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+/**
+ * Service OAuth 2.0 avec PKCE (Proof Key for Code Exchange)
+ * Implémente PKCE manuellement sans dépendance externe
+ */
+export class OAuth2Service {
+  constructor() {
+    this.oauth2Client = null;
+    this.config = null;
+    this.initialized = false;
+    this.pkceVerifier = null;
+    this._pendingVerifier = null;
   }
-});
 
-// Sauvegarder la configuration SMTP
-router.post('/config', async (req, res) => {
-  try {
-    const { 
-      host, 
-      port, 
-      secure, 
-      user, 
-      pass, 
-      from,
-      auth_type = 'password',
-      client_id = null,
-      client_secret = null,
-      redirect_uri = null
-    } = req.body;
-    const adminId = req.userId;
-    
-    console.log('📧 Sauvegarde configuration SMTP:', { host, port, secure, auth_type, from });
-    
-    if (auth_type === 'password') {
-      if (!host || !port || !user || !pass || !from) {
-        return res.status(400).json({ 
-          error: 'Tous les champs sont requis: host, port, user, pass, from' 
-        });
-      }
-    } else if (auth_type === 'oauth2') {
-      if (!host || !port || !from) {
-        return res.status(400).json({ 
-          error: 'Pour OAuth 2.0: host, port et from sont requis' 
-        });
-      }
-      if (!client_id || !client_secret) {
-        return res.status(400).json({ 
-          error: 'Pour OAuth 2.0: client_id et client_secret sont requis' 
-        });
-      }
-    } else {
-      return res.status(400).json({ error: 'Type d\'authentification non supporté' });
-    }
-    
+  /**
+   * Initialise le client OAuth 2.0 avec les credentials
+   */
+  async initialize() {
+    if (this.initialized) return;
+
     const smtpConfig = new SmtpConfig(db);
-    await smtpConfig.save({
-      host,
-      port: parseInt(port),
-      secure: secure === true || secure === 'true',
-      user: user || null,
-      pass: pass || null,
-      from,
-      auth_type,
-      client_id: client_id || null,
-      client_secret: client_secret || null,
-      redirect_uri: redirect_uri || 'urn:ietf:wg:oauth:2.0:oob'
-    });
-    
-    if (auth_type === 'oauth2') {
-      resetPKCE();
-      console.log('🔄 PKCE réinitialisé après sauvegarde OAuth');
+    this.config = await smtpConfig.get();
+
+    if (!this.config) {
+      throw new Error('Configuration SMTP non trouvée.');
     }
-    
-    const adminLog = new AdminLog(db);
-    await adminLog.create(
-      adminId,
-      'SMTP_CONFIG_UPDATED',
-      { host, port, from, auth_type },
-      req.ip
-    );
-    
-    res.json({ 
-      message: `Configuration SMTP (${auth_type}) sauvegardée avec succès`,
-      auth_type
+
+    if (this.config.auth_type !== 'oauth2') {
+      throw new Error('La configuration n\'utilise pas OAuth 2.0.');
+    }
+
+    if (!this.config.client_id || !this.config.client_secret) {
+      throw new Error('Client ID et Client Secret requis.');
+    }
+
+    this.oauth2Client = new OAuth2Client({
+      clientId: this.config.client_id,
+      clientSecret: this.config.client_secret,
+      redirectUri: this.config.redirect_uri || 'urn:ietf:wg:oauth:2.0:oob'
     });
-  } catch (error) {
-    console.error('Erreur sauvegarde config:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+
+    if (this.config.access_token) {
+      const credentials = { access_token: this.config.access_token };
+      if (this.config.refresh_token) {
+        credentials.refresh_token = this.config.refresh_token;
+      }
+      if (this.config.expiry_date) {
+        credentials.expiry_date = parseInt(this.config.expiry_date);
+      }
+      this.oauth2Client.setCredentials(credentials);
+      console.log('✅ Tokens OAuth chargés');
+    }
+
+    this.initialized = true;
+    console.log('✅ OAuth 2.0 client initialisé');
   }
-});
 
-// Tester la configuration SMTP (CORRIGÉ)
-router.post('/test', async (req, res) => {
-  try {
-    const { host, port, secure, user, pass, from, testEmail, auth_type = 'password' } = req.body;
-    const adminId = req.userId;
-    
-    console.log(`🔍 Test configuration ${auth_type}...`);
-    
-    if (auth_type === 'oauth2') {
-      // Test OAuth 2.0
-      const isComplete = await isConfigurationComplete();
-      if (!isComplete) {
-        return res.status(400).json({ 
-          error: 'Configuration OAuth 2.0 incomplète',
-          details: 'Veuillez configurer Client ID, Client Secret et Redirect URI',
-          solution: '1. Remplissez Client ID, Client Secret et Redirect URI\n2. Sauvegardez la configuration\n3. Générez l\'URL d\'autorisation\n4. Échangez le code'
-        });
-      }
+  /**
+   * Vérifie si la configuration OAuth est complète
+   */
+  async isConfigurationComplete() {
+    try {
+      const smtpConfig = new SmtpConfig(db);
+      const config = await smtpConfig.get();
+      
+      if (!config) return false;
+      if (config.auth_type !== 'oauth2') return false;
+      if (!config.client_id || !config.client_secret) return false;
+      if (!config.redirect_uri) return false;
+      if (!config.from_email) return false;
+      
+      return true;
+    } catch (error) {
+      console.error('Erreur vérification configuration:', error);
+      return false;
+    }
+  }
 
-      const result = await verifyOAuth2Config();
+  /**
+   * Vérifie si un refresh token est disponible
+   */
+  hasRefreshToken() {
+    return !!(this.config?.refresh_token);
+  }
+
+  /**
+   * Génère une chaîne aléatoire sécurisée pour PKCE
+   */
+  generateCodeVerifier() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    let result = '';
+    const randomBytes = crypto.randomBytes(128);
+    
+    for (let i = 0; i < 128; i++) {
+      result += chars[randomBytes[i] % chars.length];
+    }
+    return result;
+  }
+
+  /**
+   * Calcule le SHA-256 d'une chaîne et retourne en base64url
+   */
+  sha256Base64(text) {
+    const hash = crypto.createHash('sha256');
+    hash.update(text);
+    const digest = hash.digest();
+    const base64 = digest.toString('base64');
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  /**
+   * Génère un challenge PKCE
+   */
+  generatePKCEChallenge() {
+    try {
+      console.log('🔄 Génération PKCE...');
       
-      if (!result.valid) {
-        return res.status(401).json({ 
-          error: 'Échec de l\'authentification OAuth 2.0',
-          details: result.error,
-          solution: '1. Vérifiez que Client ID et Client Secret sont corrects\n2. Générez une nouvelle URL d\'autorisation\n3. Obtenez un nouveau code\n4. Échangez le code'
-        });
-      }
+      const verifier = this.generateCodeVerifier();
+      const challenge = this.sha256Base64(verifier);
       
-      console.log('✅ Authentification OAuth valide');
+      this.pkceVerifier = verifier;
       
-      if (testEmail) {
-        try {
-          console.log(`📧 Envoi d'un email de test à ${testEmail}...`);
-          await oauth2Service.sendEmail(
-            testEmail,
-            'Test OAuth 2.0 + PKCE - AI Optimiseur',
-            `<h2>✅ Test OAuth 2.0 avec PKCE réussi</h2>
-             <p>Ceci est un email de test envoyé avec OAuth 2.0 et PKCE.</p>
-             <p>Configuration :</p>
-             <ul>
-               <li>Hôte : ${host}</li>
-               <li>Port : ${port}</li>
-               <li>From : ${from}</li>
-               <li>Authentification : OAuth 2.0</li>
-               <li>PKCE : Activé ✅</li>
-             </ul>`
-          );
-          console.log('✅ Email de test envoyé avec succès');
-        } catch (emailError) {
-          console.error('❌ Erreur envoi email de test:', emailError);
-          return res.status(500).json({ 
-            error: 'Erreur lors de l\'envoi de l\'email de test',
-            details: emailError.message
-          });
-        }
-      }
+      console.log('✅ PKCE challenge généré');
       
-      const adminLog = new AdminLog(db);
-      await adminLog.create(
-        adminId,
-        'SMTP_OAUTH_TESTED',
-        { host, port, from, testEmail },
-        req.ip
-      );
-      
-      res.json({ 
-        success: true, 
-        message: testEmail ? '✅ Email de test envoyé avec OAuth 2.0 + PKCE' : '✅ Authentification OAuth 2.0 réussie (PKCE activé)' 
-      });
-      
-    } else {
-      // Test SMTP standard (password)
-      if (!host || !port || !user || !pass || !from) {
-        return res.status(400).json({ 
-          error: 'Tous les champs sont requis pour le test' 
-        });
-      }
-      
-      console.log('🔄 Test de connexion SMTP...');
-      console.log(`📧 Configuration: ${host}:${port}, secure: ${secure}`);
-      
-      // Configuration du transporteur
-      const transporterConfig = {
-        host: host,
-        port: parseInt(port),
-        secure: secure === true || secure === 'true',
-        auth: {
-          user: user,
-          pass: pass
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 10000,
-        tls: {
-          rejectUnauthorized: false
-        }
+      return {
+        codeVerifier: verifier,
+        codeChallenge: challenge,
+        codeChallengeMethod: 'S256'
       };
+    } catch (error) {
+      console.error('❌ Erreur génération PKCE:', error);
+      throw new Error(`Impossible de générer le challenge PKCE: ${error.message}`);
+    }
+  }
 
-      // Configuration spécifique pour Gmail
-      if (host.includes('gmail.com')) {
-        console.log('📧 Configuration Gmail détectée');
-        if (parseInt(port) === 465) {
-          transporterConfig.secure = true;
-          console.log('🔒 Port 465: SSL activé');
-        } else if (parseInt(port) === 587) {
-          transporterConfig.secure = false;
-          transporterConfig.requireTLS = true;
-          console.log('🔒 Port 587: STARTTLS activé');
-        }
+  /**
+   * Rafraîchit le token d'accès si nécessaire
+   */
+  async refreshAccessToken() {
+    try {
+      if (!this.oauth2Client) {
+        await this.initialize();
       }
 
-      // Pour les autres serveurs
-      if (parseInt(port) === 465) {
-        transporterConfig.secure = true;
-      } else if (parseInt(port) === 587) {
-        transporterConfig.secure = false;
-        transporterConfig.requireTLS = true;
+      if (!this.oauth2Client) {
+        throw new Error('Client OAuth non initialisé');
       }
 
-      console.log('📋 Configuration finale:', {
-        host: transporterConfig.host,
-        port: transporterConfig.port,
-        secure: transporterConfig.secure,
-        requireTLS: transporterConfig.requireTLS || false
-      });
+      if (!this.hasRefreshToken()) {
+        console.warn('⚠️ Aucun refresh token disponible.');
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
+      }
 
-      const transporter = nodemailer.createTransport(transporterConfig);
+      const now = Date.now();
+      const expiryDate = this.oauth2Client.credentials.expiry_date || 0;
       
-      try {
-        await transporter.verify();
-        console.log('✅ Connexion SMTP réussie');
-      } catch (verifyError) {
-        console.error('❌ Erreur de vérification SMTP:', verifyError.message);
-        
-        // Messages d'erreur spécifiques
-        let errorMessage = 'Erreur de connexion SMTP';
-        let solution = 'Vérifiez vos identifiants et paramètres de connexion';
-        
-        if (verifyError.message.includes('Application-specific password')) {
-          errorMessage = 'Mot de passe d\'application requis pour Gmail';
-          solution = '1. Activez la vérification en deux étapes sur votre compte Google\n2. Créez un mot de passe d\'application\n3. Utilisez ce mot de passe dans la configuration';
-        } else if (verifyError.message.includes('Invalid login')) {
-          errorMessage = 'Identifiants invalides';
-          solution = 'Vérifiez votre email et mot de passe. Pour Gmail, utilisez un mot de passe d\'application.';
-        } else if (verifyError.message.includes('wrong version number')) {
-          errorMessage = 'Erreur SSL/TLS';
-          solution = 'Vérifiez la configuration SSL/TLS:\n- Port 465 → secure: true\n- Port 587 → secure: false (STARTTLS)';
-        } else if (verifyError.message.includes('ETIMEDOUT') || verifyError.message.includes('timeout')) {
-          errorMessage = 'Timeout de connexion';
-          solution = 'Vérifiez que le serveur SMTP est accessible depuis votre réseau.';
-        } else if (verifyError.message.includes('ECONNREFUSED')) {
-          errorMessage = 'Connexion refusée';
-          solution = 'Vérifiez que le serveur SMTP est en ligne et que le port est correct.';
-        }
-        
-        return res.status(500).json({ 
-          error: errorMessage,
-          details: verifyError.message,
-          solution: solution,
-          config: {
-            host,
-            port,
-            secure: secure === true || secure === 'true'
-          }
-        });
+      if (expiryDate && (expiryDate - now) > 5 * 60 * 1000) {
+        console.log('✅ Token OAuth encore valide');
+        return this.oauth2Client.credentials.access_token;
       }
+
+      console.log('🔄 Rafraîchissement du token OAuth...');
       
-      // Envoyer un email de test
-      if (testEmail) {
-        try {
-          console.log(`📧 Envoi d'un email de test à ${testEmail}...`);
-          await transporter.sendMail({
-            from: from,
-            to: testEmail,
-            subject: 'Test SMTP - AI Optimiseur',
-            html: `<h2>✅ Test SMTP réussi</h2>
-                   <p>Ceci est un email de test envoyé avec SMTP standard.</p>
-                   <p>Configuration :</p>
-                   <ul>
-                     <li>Hôte : ${host}</li>
-                     <li>Port : ${port}</li>
-                     <li>SSL/TLS : ${secure ? 'Activé' : 'Désactivé (STARTTLS)'}</li>
-                     <li>From : ${from}</li>
-                     <li>Authentification : Mot de passe</li>
-                   </ul>`
-          });
-          console.log('✅ Email de test envoyé avec succès');
-        } catch (emailError) {
-          console.error('❌ Erreur envoi email de test:', emailError);
-          return res.status(500).json({ 
-            error: 'Erreur lors de l\'envoi de l\'email de test',
-            details: emailError.message
-          });
-        }
-      }
-      
-      const adminLog = new AdminLog(db);
-      await adminLog.create(
-        adminId,
-        'SMTP_TESTED',
-        { host, port, from, testEmail },
-        req.ip
+      const response = await this.oauth2Client.refreshAccessToken();
+      const credentials = response.credentials;
+
+      this.oauth2Client.setCredentials(credentials);
+
+      const smtpConfig = new SmtpConfig(db);
+      await smtpConfig.updateOAuthTokens(
+        credentials.access_token,
+        credentials.refresh_token || this.config.refresh_token,
+        credentials.expiry_date
       );
+
+      this.config.access_token = credentials.access_token;
+      this.config.refresh_token = credentials.refresh_token || this.config.refresh_token;
+      this.config.expiry_date = credentials.expiry_date;
+
+      console.log('✅ Token OAuth rafraîchi');
+      return credentials.access_token;
+    } catch (error) {
+      console.error('❌ Erreur rafraîchissement token:', error);
       
-      res.json({ 
-        success: true, 
-        message: testEmail ? '✅ Email de test envoyé avec succès' : '✅ Connexion SMTP réussie' 
-      });
-    }
-  } catch (error) {
-    console.error('❌ Erreur test SMTP:', error);
-    res.status(500).json({ 
-      error: 'Erreur de connexion SMTP',
-      details: error.message
-    });
-  }
-});
-
-// ============================================
-// ROUTES OAuth 2.0 avec PKCE
-// ============================================
-
-// Obtenir l'URL d'autorisation
-router.get('/oauth/auth-url', async (req, res) => {
-  try {
-    console.log('🔐 Génération URL OAuth...');
-    
-    const smtpConfig = new SmtpConfig(db);
-    const config = await smtpConfig.get();
-    
-    if (!config) {
-      return res.status(400).json({ 
-        error: 'Configuration SMTP non trouvée',
-        details: 'Veuillez d\'abord sauvegarder une configuration avec OAuth 2.0',
-        solution: '1. Remplissez tous les champs (Client ID, Client Secret, Redirect URI)\n2. Cliquez sur "Sauvegarder"\n3. Revenez générer l\'URL'
-      });
-    }
-
-    console.log('✅ Configuration trouvée:', {
-      auth_type: config.auth_type,
-      hasClientId: !!config.client_id,
-      hasClientSecret: !!config.client_secret,
-      hasRedirectUri: !!config.redirect_uri
-    });
-
-    if (config.auth_type !== 'oauth2') {
-      return res.status(400).json({ 
-        error: 'Le type d\'authentification n\'est pas OAuth 2.0',
-        details: `Type actuel: ${config.auth_type}`,
-        solution: 'Sélectionnez "OAuth 2.0 + PKCE" dans le type d\'authentification'
-      });
-    }
-
-    if (!config.client_id) {
-      return res.status(400).json({ 
-        error: 'Client ID manquant',
-        details: 'Le Client ID est requis pour l\'authentification OAuth 2.0',
-        solution: 'Obtenez votre Client ID depuis Google Cloud Console'
-      });
-    }
-
-    if (!config.client_secret) {
-      return res.status(400).json({ 
-        error: 'Client Secret manquant',
-        details: 'Le Client Secret est requis pour l\'authentification OAuth 2.0',
-        solution: 'Obtenez votre Client Secret depuis Google Cloud Console'
-      });
-    }
-
-    if (!config.redirect_uri) {
-      return res.status(400).json({ 
-        error: 'Redirect URI manquant',
-        details: 'L\'URI de redirection est requis pour l\'authentification OAuth 2.0',
-        solution: 'Utilisez "urn:ietf:wg:oauth:2.0:oob" pour le mode test'
-      });
-    }
-
-    console.log('✅ Credentials vérifiés, génération du challenge PKCE...');
-
-    resetPKCE();
-    
-    const url = await getAuthUrl();
-    const pkceStatus = getPKCEStatus();
-    
-    console.log('✅ URL générée avec succès');
-    
-    res.json({ 
-      success: true,
-      url,
-      pkce: {
-        enabled: true,
-        method: 'S256',
-        status: pkceStatus
-      },
-      message: 'URL d\'autorisation générée avec succès. Ouvrez-la dans votre navigateur et autorisez l\'accès.',
-      instructions: '1. Ouvrez l\'URL dans un navigateur\n2. Connectez-vous avec votre compte Google\n3. Autorisez l\'accès\n4. Copiez le code affiché\n5. Revenez et collez le code dans "Code d\'autorisation"'
-    });
-  } catch (error) {
-    console.error('❌ Erreur génération URL OAuth:', error);
-    
-    let errorMessage = 'Erreur lors de la génération de l\'URL d\'autorisation';
-    let solution = 'Vérifiez votre configuration';
-    let details = error.message;
-    
-    if (error.message.includes('Configuration SMTP non trouvée')) {
-      errorMessage = 'Configuration SMTP non trouvée';
-      solution = 'Sauvegardez d\'abord une configuration avec OAuth 2.0';
-    } else if (error.message.includes('Client ID')) {
-      errorMessage = 'Client ID invalide ou manquant';
-      solution = 'Vérifiez que vous avez copié le Client ID correctement';
-    } else if (error.message.includes('Client Secret')) {
-      errorMessage = 'Client Secret invalide ou manquant';
-      solution = 'Vérifiez que vous avez copié le Client Secret correctement';
-    } else if (error.message.includes('redirect')) {
-      errorMessage = 'Redirect URI invalide';
-      solution = 'Vérifiez que le Redirect URI correspond à celui enregistré dans la Google Cloud Console';
-    }
-    
-    res.status(500).json({ 
-      error: errorMessage,
-      details: details,
-      solution: solution
-    });
-  }
-});
-
-// Échanger le code d'autorisation
-router.post('/oauth/exchange', async (req, res) => {
-  try {
-    const { code } = req.body;
-    const adminId = req.userId;
-    
-    console.log('🔄 Échange du code OAuth...');
-    
-    if (!code) {
-      return res.status(400).json({ 
-        error: 'Code d\'autorisation requis',
-        details: 'Le code d\'autorisation est nécessaire pour échanger contre des tokens',
-        solution: '1. Générez l\'URL d\'autorisation\n2. Autorisez l\'accès dans Google\n3. Copiez le code affiché\n4. Collez-le ici'
-      });
-    }
-    
-    if (code.length < 10) {
-      return res.status(400).json({ 
-        error: 'Code d\'autorisation invalide',
-        details: 'Le code semble trop court. Le code doit contenir environ 100 caractères.',
-        solution: 'Assurez-vous d\'avoir copié le code complet de la page Google'
-      });
-    }
-    
-    console.log(`📝 Code reçu (${code.length} caractères)`);
-    
-    const tokens = await exchangeOAuthCode(code);
-    
-    console.log('✅ Tokens OAuth obtenus avec succès');
-    
-    const adminLog = new AdminLog(db);
-    await adminLog.create(
-      adminId,
-      'OAUTH_EXCHANGE_COMPLETED',
-      { 
-        success: true,
-        pkceEnabled: true
-      },
-      req.ip
-    );
-    
-    res.json({ 
-      success: true, 
-      message: '✅ Tokens OAuth obtenus avec succès (PKCE)',
-      tokens: {
-        access_token: tokens.access_token ? '***' : null,
-        refresh_token: tokens.refresh_token ? '***' : null,
-        expiry_date: tokens.expiry_date
-      },
-      nextSteps: '1. Cliquez sur "Tester la configuration" pour vérifier\n2. Envoyez un email de test pour confirmer'
-    });
-  } catch (error) {
-    console.error('❌ Erreur échange code OAuth:', error);
-    
-    let errorMessage = 'Erreur lors de l\'échange du code OAuth';
-    let solution = 'Vérifiez le code et réessayez';
-    
-    if (error.message.includes('PKCE verifier')) {
-      errorMessage = 'Verifier PKCE manquant ou expiré';
-      solution = 'Générez une nouvelle URL d\'autorisation';
-    } else if (error.message.includes('invalid_grant')) {
-      errorMessage = 'Code invalide ou expiré';
-      solution = '1. Le code expire après 10 minutes\n2. Générez une nouvelle URL\n3. Obtenez un nouveau code';
-    } else if (error.message.includes('redirect_uri')) {
-      errorMessage = 'Redirect URI ne correspond pas';
-      solution = 'Vérifiez que le Redirect URI configuré correspond à celui de la Google Cloud Console';
-    }
-    
-    res.status(500).json({ 
-      error: errorMessage,
-      details: error.message,
-      solution: solution
-    });
-  }
-});
-
-// Vérifier l'état de l'authentification OAuth
-router.get('/oauth/status', async (req, res) => {
-  try {
-    const smtpConfig = new SmtpConfig(db);
-    const config = await smtpConfig.get();
-    
-    let status = 'not_configured';
-    let isConfigured = false;
-    let details = null;
-    let pkceStatus = null;
-    let authType = 'none';
-    let hasTokens = false;
-    let hasClientId = false;
-    let hasClientSecret = false;
-    let hasRedirectUri = false;
-    
-    if (config) {
-      isConfigured = true;
-      authType = config.auth_type;
-      hasClientId = !!config.client_id;
-      hasClientSecret = !!config.client_secret;
-      hasRedirectUri = !!config.redirect_uri;
-      hasTokens = !!(config.access_token && config.refresh_token);
+      if (error.message.includes('invalid_grant') || 
+          error.message.includes('invalid refresh token') ||
+          error.message.includes('No refresh token') ||
+          error.message.includes('REAUTHENTICATION_REQUIRED')) {
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
+      }
       
-      if (config.auth_type === 'oauth2') {
-        if (!hasClientId || !hasClientSecret) {
-          status = 'incomplete_credentials';
-          details = 'Client ID ou Client Secret manquant';
-        } else if (!hasTokens) {
-          status = 'no_tokens';
-          details = 'Tokens OAuth non obtenus. Générez l\'URL et échangez le code.';
-        } else {
-          const result = await verifyOAuth2Config();
-          status = result.valid ? 'valid' : 'invalid';
-          details = result.error || null;
-          pkceStatus = getPKCEStatus();
+      throw new Error(`Impossible de rafraîchir le token: ${error.message}`);
+    }
+  }
+
+  /**
+   * Envoie un email via Gmail API avec OAuth 2.0
+   */
+  async sendEmail(to, subject, html, text = null) {
+    try {
+      console.log(`📧 Envoi d'email à ${to}...`);
+      
+      await this.initialize();
+      
+      if (!this.hasRefreshToken()) {
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
+      }
+      
+      await this.refreshAccessToken();
+
+      const gmail = google.gmail({
+        version: 'v1',
+        auth: this.oauth2Client
+      });
+
+      const emailLines = [
+        `From: ${this.config.from_email}`,
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/html; charset="UTF-8"',
+        '',
+        html
+      ];
+
+      const email = emailLines.join('\r\n');
+      const encodedEmail = Buffer.from(email)
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+      const response = await gmail.users.messages.send({
+        userId: 'me',
+        requestBody: {
+          raw: encodedEmail
         }
+      });
+
+      console.log(`✅ Email envoyé à ${to}`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Erreur envoi email:', error);
+      
+      if (error.message.includes('REAUTHENTICATION_REQUIRED') ||
+          error.message.includes('invalid_grant')) {
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
+      }
+      
+      throw new Error(`Échec envoi email: ${error.message}`);
+    }
+  }
+
+  /**
+   * Génère l'URL d'autorisation OAuth 2.0 avec PKCE
+   */
+  async getAuthUrl() {
+    try {
+      console.log('🔐 Génération URL OAuth...');
+      
+      const isComplete = await this.isConfigurationComplete();
+      if (!isComplete) {
+        throw new Error('Configuration OAuth 2.0 incomplète.');
+      }
+
+      await this.initialize();
+      
+      if (!this.oauth2Client) {
+        throw new Error('Client OAuth non initialisé');
+      }
+
+      const pkce = this.generatePKCEChallenge();
+      
+      const scopes = [
+        'https://www.googleapis.com/auth/gmail.send',
+        'https://www.googleapis.com/auth/gmail.compose'
+      ];
+
+      console.log('📧 Scopes configurés:', scopes);
+      console.log('🔄 Redirect URI:', this.config.redirect_uri);
+
+      const url = this.oauth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: scopes,
+        include_granted_scopes: true,
+        prompt: 'consent',
+        code_challenge: pkce.codeChallenge,
+        code_challenge_method: pkce.codeChallengeMethod
+      });
+
+      this._pendingVerifier = pkce.codeVerifier;
+      console.log(`✅ Verifier stocké: ${this._pendingVerifier.substring(0, 20)}...`);
+
+      console.log('✅ URL d\'autorisation générée');
+      console.log('📝 Instructions:');
+      console.log('  1. Ouvrez l\'URL dans un navigateur');
+      console.log('  2. Connectez-vous avec votre compte Google');
+      console.log('  3. Autorisez l\'accès');
+      console.log('  4. Copiez le code affiché (il expire après 10 minutes)');
+      console.log('  5. Revenez et collez le code');
+
+      return url;
+    } catch (error) {
+      console.error('❌ Erreur génération URL:', error);
+      throw new Error(`Erreur: ${error.message}`);
+    }
+  }
+
+  /**
+   * Échange le code d'autorisation contre des tokens (avec PKCE)
+   * CORRIGÉ : Le code_verifier est maintenant correctement transmis
+   */
+  async exchangeCode(code) {
+    try {
+      console.log('🔄 Échange du code OAuth avec PKCE...');
+      
+      // Vérifier que le code est valide
+      if (!code || code.trim() === '') {
+        throw new Error('Code d\'autorisation vide. Veuillez générer une nouvelle URL.');
+      }
+
+      // Nettoyer le code
+      code = code.trim();
+
+      console.log(`📝 Code reçu: ${code.substring(0, 20)}... (${code.length} chars)`);
+
+      const isComplete = await this.isConfigurationComplete();
+      if (!isComplete) {
+        throw new Error('Configuration OAuth 2.0 incomplète.');
+      }
+
+      await this.initialize();
+      
+      if (!this.oauth2Client) {
+        throw new Error('Client OAuth non initialisé');
+      }
+
+      // Récupérer le verifier stocké
+      const verifier = this._pendingVerifier || this.pkceVerifier;
+      
+      if (!verifier) {
+        throw new Error('Aucun PKCE verifier disponible. Veuillez générer une nouvelle URL d\'autorisation.');
+      }
+
+      console.log(`🔑 Verifier utilisé: ${verifier.substring(0, 20)}... (${verifier.length} chars)`);
+
+      // IMPORTANT: Utiliser la méthode getToken avec le code_verifier
+      // La méthode getToken de google-auth-library accepte un objet avec code_verifier
+      const response = await this.oauth2Client.getToken({
+        code: code,
+        code_verifier: verifier  // <-- C'est ici que le code_verifier doit être passé
+      });
+
+      const tokens = response.tokens;
+
+      if (!tokens.access_token) {
+        throw new Error('Access token non reçu');
+      }
+
+      console.log('✅ Tokens OAuth reçus');
+      console.log(`📅 Expire le: ${tokens.expiry_date ? new Date(tokens.expiry_date).toLocaleString() : 'Non spécifié'}`);
+      
+      if (tokens.refresh_token) {
+        console.log('✅ Refresh token obtenu');
       } else {
-        status = 'password_configured';
-        details = 'Configuration SMTP avec mot de passe';
+        console.warn('⚠️ Aucun refresh token reçu.');
+        console.warn('⚠️ Pour obtenir un refresh token, utilisez un redirect_uri HTTPS valide.');
       }
-    }
-    
-    res.json({ 
-      status,
-      isConfigured,
-      authType,
-      details,
-      hasClientId,
-      hasClientSecret,
-      hasRedirectUri,
-      hasTokens,
-      pkce: {
-        enabled: true,
-        method: 'S256',
-        status: pkceStatus || {
-          hasChallenge: false,
-          hasVerifier: false,
-          hasStoredVerifier: false
+
+      // Sauvegarder les tokens
+      const smtpConfig = new SmtpConfig(db);
+      await smtpConfig.updateOAuthTokens(
+        tokens.access_token,
+        tokens.refresh_token || null,
+        tokens.expiry_date || null
+      );
+
+      this.config.access_token = tokens.access_token;
+      this.config.refresh_token = tokens.refresh_token || this.config.refresh_token;
+      this.config.expiry_date = tokens.expiry_date || this.config.expiry_date;
+
+      // Nettoyer le verifier
+      this._pendingVerifier = null;
+      this.pkceVerifier = null;
+
+      console.log('✅ Tokens OAuth sauvegardés avec succès');
+      return tokens;
+    } catch (error) {
+      console.error('❌ Erreur échange code:', error);
+      
+      // Analyser l'erreur pour donner un message plus précis
+      if (error.message.includes('invalid_grant')) {
+        if (error.message.includes('Missing code verifier')) {
+          throw new Error('Code verifier PKCE manquant. Veuillez générer une nouvelle URL d\'autorisation.');
         }
-      },
-      nextSteps: status === 'valid' ? '✅ Configuration OAuth 2.0 prête à être utilisée' :
-                 status === 'no_tokens' ? '🔄 Générez l\'URL d\'autorisation et échangez le code' :
-                 status === 'incomplete_credentials' ? '📝 Complétez Client ID et Client Secret' :
-                 status === 'not_configured' ? '📝 Configurez d\'abord le SMTP avec OAuth 2.0' :
-                 status === 'password_configured' ? '📝 Changez le type d\'authentification vers OAuth 2.0' :
-                 '❌ Vérifiez votre configuration'
-    });
-  } catch (error) {
-    console.error('❌ Erreur vérification statut OAuth:', error);
-    res.status(500).json({ 
-      error: 'Erreur lors de la vérification',
-      details: error.message
-    });
-  }
-});
-
-// Réinitialiser l'état PKCE
-router.post('/oauth/reset-pkce', async (req, res) => {
-  try {
-    resetPKCE();
-    res.json({ 
-      success: true, 
-      message: 'État PKCE réinitialisé avec succès',
-      nextSteps: 'Vous pouvez maintenant générer une nouvelle URL d\'autorisation'
-    });
-  } catch (error) {
-    console.error('❌ Erreur réinitialisation PKCE:', error);
-    res.status(500).json({ error: 'Erreur lors de la réinitialisation' });
-  }
-});
-
-// Supprimer la configuration SMTP
-router.delete('/config', async (req, res) => {
-  try {
-    const adminId = req.userId;
-    const smtpConfig = new SmtpConfig(db);
-    await smtpConfig.delete();
-    
-    resetPKCE();
-    
-    const adminLog = new AdminLog(db);
-    await adminLog.create(
-      adminId,
-      'SMTP_CONFIG_DELETED',
-      {},
-      req.ip
-    );
-    
-    res.json({ 
-      message: 'Configuration SMTP supprimée avec succès',
-      nextSteps: 'Vous pouvez maintenant créer une nouvelle configuration'
-    });
-  } catch (error) {
-    console.error('❌ Erreur suppression config:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// Récupérer les modèles d'email
-router.get('/email/templates', async (req, res) => {
-  try {
-    const templates = [
-      {
-        id: 'welcome',
-        name: 'Bienvenue',
-        subject: 'Bienvenue sur AI Optimiseur ! 🎯',
-        message: `Bonjour [NOM],
-
-Bienvenue sur AI Optimiseur, votre assistant intelligent pour optimiser vos candidatures !
-
-Pour commencer, connectez-vous et entrez votre clé API pour utiliser tous nos outils d'optimisation.
-
-L'équipe AI Optimiseur`
-      },
-      {
-        id: 'newsletter',
-        name: 'Newsletter - Nouvelles fonctionnalités',
-        subject: 'Nouvelles fonctionnalités disponibles !',
-        message: `Bonjour [NOM],
-
-Nous sommes ravis de vous annoncer les dernières améliorations de AI Optimiseur :
-
-- Nouvel outil de détection de signaux d'alarme
-- Amélioration de l'analyse ATS
-- Interface plus intuitive
-
-Découvrez toutes ces nouveautés en vous connectant dès maintenant !
-
-L'équipe AI Optimiseur`
-      },
-      {
-        id: 'inactive',
-        name: 'Utilisateur inactif',
-        subject: 'Nous vous avons manqué ?',
-        message: `Bonjour [NOM],
-
-Nous avons remarqué que vous n'avez pas utilisé AI Optimiseur depuis un certain temps.
-
-Nous avons ajouté de nouvelles fonctionnalités qui pourraient vous intéresser :
-- Réécriture complète du CV
-- Préparation aux entretiens
-- Lettres de motivation personnalisées
-
-Revenez nous voir !
-
-L'équipe AI Optimiseur`
-      },
-      {
-        id: 'maintenance',
-        name: 'Maintenance planifiée',
-        subject: 'Maintenance planifiée',
-        message: `Bonjour [NOM],
-
-Nous vous informons qu'une maintenance du service AI Optimiseur est prévue le [DATE].
-
-Le service sera indisponible pendant environ 2 heures.
-
-Nous vous remercions de votre compréhension.
-
-L'équipe AI Optimiseur`
+        throw new Error('Code invalide ou expiré. Les codes expirent après 10 minutes. Générez une nouvelle URL.');
+      } else if (error.message.includes('redirect_uri_mismatch')) {
+        throw new Error('Redirect URI ne correspond pas. Vérifiez la configuration.');
+      } else if (error.message.includes('invalid_client')) {
+        throw new Error('Client ID ou Client Secret invalide. Vérifiez vos identifiants.');
+      } else if (error.message.includes('access_denied')) {
+        throw new Error('Accès refusé par l\'utilisateur. Veuillez autoriser l\'accès dans Google.');
       }
-    ];
-    
-    res.json(templates);
-  } catch (error) {
-    console.error('❌ Erreur récupération templates:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+      
+      throw new Error(`Échec de l'échange: ${error.message}`);
+    }
   }
-});
 
-export default router;
+  /**
+   * Vérifie si l'authentification OAuth est valide
+   */
+  async verifyAuth() {
+    try {
+      console.log('🔐 Vérification OAuth...');
+      
+      const isComplete = await this.isConfigurationComplete();
+      if (!isComplete) {
+        return { valid: false, error: 'Configuration incomplète' };
+      }
+
+      await this.initialize();
+      
+      if (!this.oauth2Client) {
+        return { valid: false, error: 'Client non initialisé' };
+      }
+
+      if (!this.hasRefreshToken()) {
+        return { 
+          valid: false, 
+          error: 'Aucun refresh token disponible. Veuillez ré-authentifier.',
+          reauthRequired: true
+        };
+      }
+
+      try {
+        await this.refreshAccessToken();
+      } catch (refreshError) {
+        if (refreshError.message.includes('REAUTHENTICATION_REQUIRED')) {
+          return { 
+            valid: false, 
+            error: 'Refresh token invalide. Veuillez ré-authentifier.',
+            reauthRequired: true
+          };
+        }
+        throw refreshError;
+      }
+      
+      const gmail = google.gmail({
+        version: 'v1',
+        auth: this.oauth2Client
+      });
+
+      const profile = await gmail.users.getProfile({
+        userId: 'me'
+      });
+
+      console.log(`✅ OAuth valide pour ${profile.data.emailAddress}`);
+      
+      return { 
+        valid: true,
+        pkceEnabled: true,
+        email: profile.data.emailAddress,
+        messagesTotal: profile.data.messagesTotal,
+        hasRefreshToken: this.hasRefreshToken()
+      };
+    } catch (error) {
+      console.error('❌ Erreur vérification:', error);
+      return { 
+        valid: false, 
+        error: error.message,
+        pkceEnabled: true
+      };
+    }
+  }
+
+  /**
+   * Réinitialise l'état PKCE
+   */
+  resetPKCE() {
+    this.pkceVerifier = null;
+    this._pendingVerifier = null;
+    console.log('🔄 PKCE réinitialisé');
+  }
+
+  /**
+   * Obtient l'état PKCE
+   */
+  getPKCEStatus() {
+    return {
+      hasVerifier: !!this.pkceVerifier,
+      hasPendingVerifier: !!this._pendingVerifier,
+      isConfigured: this.config !== null,
+      authType: this.config?.auth_type || 'none',
+      hasTokens: !!(this.config?.access_token && this.config?.refresh_token),
+      hasRefreshToken: this.hasRefreshToken()
+    };
+  }
+}
+
+// ============================================
+// EXPORT
+// ============================================
+
+export const oauth2Service = new OAuth2Service();
+
+export async function sendEmailOAuth2(to, subject, html, text = null) {
+  return oauth2Service.sendEmail(to, subject, html, text);
+}
+
+export async function verifyOAuth2Config() {
+  return oauth2Service.verifyAuth();
+}
+
+export async function getAuthUrl() {
+  return oauth2Service.getAuthUrl();
+}
+
+export async function exchangeOAuthCode(code) {
+  return oauth2Service.exchangeCode(code);
+}
+
+export async function getPKCEStatus() {
+  return oauth2Service.getPKCEStatus();
+}
+
+export async function resetPKCE() {
+  return oauth2Service.resetPKCE();
+}
+
+export async function isConfigurationComplete() {
+  return oauth2Service.isConfigurationComplete();
+}
+
+export default oauth2Service;
