@@ -47,10 +47,10 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 - ✅ Compatibilité avec tous les serveurs SMTP
 - ✅ Simple à configurer
 - ⚠️ Pour Gmail, il faut créer un mot de passe d'application
-  Etape 1. Activez la vérification en deux étapes
+##### Etape 1. Activez la vérification en deux étapes
     - Allez sur https://myaccount.google.com/security
     - Activez "Vérification en deux étapes"
-  Etape 2. Créez un mot de passe d'application
+##### Etape 2. Créez un mot de passe d'application
     - Allez sur https://myaccount.google.com/apppasswords
     - Sélectionnez "AI Optimiseur" comme nom
     - Copiez le mot de passe généré
