@@ -46,7 +46,14 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 #### 📧 Authentification SMTP par mot de passe
 - ✅ Compatibilité avec tous les serveurs SMTP
 - ✅ Simple à configurer
-- ⚠️ Pour Gmail, il faut créer un mot de passe d'application: https://myaccount.google.com/apppasswords
+- ⚠️ Pour Gmail, il faut créer un mot de passe d'application
+  1. Activez la vérification en deux étapes
+  - Allez sur https://myaccount.google.com/security
+  - Activez "Vérification en deux étapes"
+  2. Créez un mot de passe d'application
+  - Allez sur https://myaccount.google.com/apppasswords
+  - Sélectionnez "AI Optimiseur" comme nom
+  - Copiez le mot de passe généré
 - ⚠️ Important : Les mots de passe d'application ne sont pas recommandés et sont inutiles dans la plupart des cas. Pour protéger votre compte, utilisez l'option "Se connecter avec Google" pour associer des applications à votre compte Google.
 - ⚠️ Moins sécurisé que OAuth 2.0
 #### 📧 Authentification SMTP OAuth 2.0 + PKCE
