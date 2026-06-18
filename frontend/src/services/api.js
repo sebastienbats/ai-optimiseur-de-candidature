@@ -7,7 +7,7 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 60000, // 60 secondes pour les appels Claude
+  timeout: 120000, // 120 secondes (2 minutes) pour les sauvegardes
 });
 
 // Intercepteur pour ajouter le token
@@ -23,6 +23,12 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Ne pas rediriger pour les erreurs de timeout
+    if (error.code === 'ECONNABORTED') {
+      console.error('⏱️ Timeout de la requête');
+      return Promise.reject(error);
+    }
+    
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
@@ -33,3 +39,27 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Fonction spéciale pour les requêtes de sauvegarde avec timeout plus long
+export const backupApi = {
+  createBackup: async (type = 'full') => {
+    const response = await fetch(`${API_URL}/admin/database/backup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      },
+      body: JSON.stringify({ type }),
+      // Pas de timeout pour les sauvegardes
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+    
+    return response.json();
+  }
+};
+
+export default api;
