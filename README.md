@@ -91,15 +91,14 @@ URI de redirection autorisés : https://votre-domaine.com/oauth2/callback
 - Allez dans API et services → Écran de consentement OAuth
 - Choisissez "Externe" (ou "Interne" si c'est pour un usage personnel)
 - Remplissez les champs :
-   - Nom de l'application : AI Optimiseur
-   - Email de support : votre email
-   - Email du développeur : votre email
-- dans API et services > Écran de consentement OAuth
-  - Si vous modifiez une application existante : Cliquez sur Modifier en bas de l'écran, puis avancez jusqu'à l'étape 2 (Scopes).
-  - Si vous créez une nouvelle application : Suivez les étapes pour configurer l'écran de consentement. Lorsque vous arriverez à la section "Scopes", vous pourrez les ajouter, ajoutez les scopes :
-   - https://www.googleapis.com/auth/gmail.send
-   - https://www.googleapis.com/auth/gmail.compose
-   - Ajoutez vos emails dans la section "Utilisateurs de test" (si mode test)
+  - Nom de l'application : AI Optimiseur
+  - Email de support : votre email
+  - Email du développeur : votre email
+- dans API et services > Accès aux données
+  - Cliquer sur "Ajouter ou supprimer des niveaux d'accés", ajoutez les scopes :
+  - https://www.googleapis.com/auth/gmail.send
+  - https://www.googleapis.com/auth/gmail.compose
+- Ajoutez vos emails dans la section "Utilisateurs de test" (si mode test)
 ## 🚀 Installation
 ### Prérequis
 - Node.js (v18+)
