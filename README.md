@@ -46,6 +46,7 @@ L’interface d’administration est accessible via le bouton « 🔐 Administra
 #### 📧 Authentification SMTP par mot de passe
 - ✅ Compatibilité avec tous les serveurs SMTP
 - ✅ Simple à configurer
+- ⚠️ Pour Gmail, il faut créer un mot de passe d'application: https://myaccount.google.com/apppasswords
 - ⚠️ Moins sécurisé que OAuth 2.0
 #### 📧 Authentification SMTP OAuth 2.0 + PKCE
 - ✅ Sécurisé et moderne
