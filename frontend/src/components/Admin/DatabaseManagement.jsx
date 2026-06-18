@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api } from '../../services/api';
+import { api, backupApi } from '../../services/api';
 
 export default function DatabaseManagement() {
   const [backups, setBackups] = useState([]);
@@ -8,6 +8,7 @@ export default function DatabaseManagement() {
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+  const [showSpinner, setShowSpinner] = useState(false);
 
   useEffect(() => {
     fetchBackups();
@@ -29,28 +30,43 @@ export default function DatabaseManagement() {
 
   const createBackup = async (type = 'full') => {
     setBackupInProgress(true);
+    setShowSpinner(true);
     setError(null);
     setSuccessMessage(null);
     
+    const typeLabel = type === 'full' ? 'complète' : 'incrémentielle';
+    console.log(`🔄 Création de la sauvegarde ${typeLabel}...`);
+    
     try {
-      const response = await api.post('/admin/database/backup', { type });
+      // Utiliser la fonction spéciale avec timeout plus long
+      const data = await backupApi.createBackup(type);
       
-      // ✅ Vérifier la réponse du serveur
-      if (response.data && response.data.success === true) {
-        setSuccessMessage(`✅ Sauvegarde ${type} créée avec succès !`);
+      console.log('✅ Réponse reçue:', data);
+      
+      if (data && data.success === true) {
+        setSuccessMessage(`✅ Sauvegarde ${typeLabel} créée avec succès !`);
         await fetchBackups();
         // Effacer le message après 5 secondes
         setTimeout(() => setSuccessMessage(null), 5000);
       } else {
-        throw new Error(response.data?.error || 'Erreur inconnue');
+        throw new Error(data?.error || 'Erreur inconnue');
       }
     } catch (error) {
-      console.error('Erreur sauvegarde:', error);
-      const errorMsg = error.response?.data?.error || error.message || 'Erreur lors de la sauvegarde';
+      console.error('❌ Erreur sauvegarde:', error);
+      
+      let errorMsg = 'Erreur lors de la sauvegarde';
+      
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        errorMsg = '⏱️ La sauvegarde prend trop de temps. Vérifiez que le serveur est en cours d\'exécution.';
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+      
       setError(`❌ ${errorMsg}`);
-      setTimeout(() => setError(null), 5000);
+      setTimeout(() => setError(null), 8000);
     } finally {
       setBackupInProgress(false);
+      setShowSpinner(false);
     }
   };
 
@@ -198,6 +214,14 @@ export default function DatabaseManagement() {
       {successMessage && (
         <div className="bg-green-50 border border-green-400 text-green-700 px-4 py-3 rounded-lg">
           {successMessage}
+        </div>
+      )}
+      
+      {/* Spinner de chargement */}
+      {showSpinner && (
+        <div className="bg-blue-50 border border-blue-400 text-blue-700 px-4 py-3 rounded-lg flex items-center gap-2">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-700"></div>
+          <span>Sauvegarde en cours... Veuillez patienter.</span>
         </div>
       )}
 
