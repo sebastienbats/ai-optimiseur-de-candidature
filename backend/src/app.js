@@ -26,8 +26,8 @@ app.use(cors({
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 app.use('/api', limiter);
 
@@ -38,7 +38,21 @@ const adminLimiter = rateLimit({
 });
 app.use('/api/admin', adminLimiter);
 
+// ✅ Augmenter la limite de taille et le timeout
 app.use(express.json({ limit: '50mb' }));
+
+// ✅ Timeout pour les requêtes longues (sauvegardes)
+app.use((req, res, next) => {
+  // Augmenter le timeout à 5 minutes pour les sauvegardes
+  req.setTimeout(300000, () => {
+    console.error('⏱️ Timeout de la requête:', req.method, req.url);
+    res.status(504).json({ 
+      success: false,
+      error: 'La requête a pris trop de temps. Veuillez réessayer.' 
+    });
+  });
+  next();
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -57,7 +71,16 @@ app.get('/health', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
+  
+  if (err.code === 'ECONNABORTED') {
+    return res.status(504).json({ 
+      success: false,
+      error: 'La requête a expiré. Veuillez réessayer.' 
+    });
+  }
+  
   res.status(500).json({ 
+    success: false,
     error: process.env.NODE_ENV === 'production' 
       ? 'Erreur serveur' 
       : err.message 
