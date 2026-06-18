@@ -27,6 +27,24 @@ router.post('/backup', async (req, res) => {
     const { type = 'full' } = req.body;
     const adminId = req.userId;
     
+    console.log(`🔄 Sauvegarde ${type} demandée par admin ${adminId}`);
+    
+    // Vérifier que le dossier backups existe
+    const backupDir = path.join(__dirname, '../../../backups');
+    if (!fs.existsSync(backupDir)) {
+      try {
+        fs.mkdirSync(backupDir, { recursive: true });
+        console.log(`✅ Dossier backups créé: ${backupDir}`);
+      } catch (mkdirError) {
+        console.error('❌ Erreur création dossier backups:', mkdirError);
+        return res.status(500).json({ 
+          success: false,
+          error: 'Impossible de créer le dossier de sauvegarde',
+          details: mkdirError.message
+        });
+      }
+    }
+    
     const filename = await backupDatabase(type);
     
     const adminLog = new AdminLog(db);
@@ -37,13 +55,19 @@ router.post('/backup', async (req, res) => {
       req.ip
     );
     
-    res.json({
-      message: 'Sauvegarde créée avec succès',
-      filename
+    // ✅ Retourner une réponse JSON valide avec succès: true
+    res.status(200).json({
+      success: true,
+      message: `✅ Sauvegarde ${type} créée avec succès`,
+      filename: filename
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur lors de la sauvegarde' });
+    console.error('❌ Erreur lors de la sauvegarde:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Erreur lors de la sauvegarde',
+      details: error.message
+    });
   }
 });
 
@@ -51,10 +75,14 @@ router.post('/backup', async (req, res) => {
 router.get('/backups', async (req, res) => {
   try {
     const backups = await listBackups();
-    res.json({ backups });
+    res.json({ success: true, backups });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur lors de la liste des sauvegardes' });
+    console.error('❌ Erreur liste sauvegardes:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Erreur lors de la liste des sauvegardes',
+      details: error.message
+    });
   }
 });
 
@@ -65,19 +93,19 @@ router.get('/backups/download/:filename', async (req, res) => {
     const backupDir = path.join(__dirname, '../../../backups');
     const filePath = path.join(backupDir, filename);
     
-    // Vérification de sécurité : empêcher le path traversal
+    // Vérification de sécurité
     if (!filePath.startsWith(backupDir)) {
-      return res.status(403).json({ error: 'Accès non autorisé' });
+      return res.status(403).json({ success: false, error: 'Accès non autorisé' });
     }
     
     if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Fichier non trouvé' });
+      return res.status(404).json({ success: false, error: 'Fichier non trouvé' });
     }
     
     res.download(filePath);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur lors du téléchargement' });
+    console.error('❌ Erreur téléchargement:', error);
+    res.status(500).json({ success: false, error: 'Erreur lors du téléchargement' });
   }
 });
 
@@ -88,7 +116,10 @@ router.post('/restore', async (req, res) => {
     const adminId = req.userId;
     
     if (!filename) {
-      return res.status(400).json({ error: 'Nom de fichier requis' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Nom de fichier requis' 
+      });
     }
     
     await restoreDatabase(filename);
@@ -102,12 +133,17 @@ router.post('/restore', async (req, res) => {
     );
     
     res.json({
-      message: 'Base de données restaurée avec succès',
+      success: true,
+      message: '✅ Base de données restaurée avec succès',
       filename
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message || 'Erreur lors de la restauration' });
+    console.error('❌ Erreur restauration:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Erreur lors de la restauration',
+      details: error.message
+    });
   }
 });
 
@@ -127,14 +163,21 @@ router.delete('/backups/:filename', async (req, res) => {
       req.ip
     );
     
-    res.json({ message: 'Sauvegarde supprimée avec succès' });
+    res.json({ 
+      success: true,
+      message: '✅ Sauvegarde supprimée avec succès' 
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message || 'Erreur lors de la suppression' });
+    console.error('❌ Erreur suppression:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Erreur lors de la suppression',
+      details: error.message
+    });
   }
 });
 
-// Exporter la base de données en format JSON
+// Exporter la base de données en JSON
 router.get('/export/json', async (req, res) => {
   try {
     const adminId = req.userId;
@@ -158,12 +201,17 @@ router.get('/export/json', async (req, res) => {
     );
     
     res.json({
+      success: true,
       exported_at: new Date().toISOString(),
       data: exportData
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur lors de l\'export' });
+    console.error('❌ Erreur export:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Erreur lors de l\'export',
+      details: error.message
+    });
   }
 });
 
@@ -174,7 +222,10 @@ router.post('/import/json', async (req, res) => {
     const adminId = req.userId;
     
     if (!data || typeof data !== 'object') {
-      return res.status(400).json({ error: 'Données JSON invalides' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Données JSON invalides' 
+      });
     }
     
     // Commencer une transaction
@@ -208,7 +259,8 @@ router.post('/import/json', async (req, res) => {
       );
       
       res.json({
-        message: 'Données importées avec succès',
+        success: true,
+        message: '✅ Données importées avec succès',
         tables: Object.keys(data)
       });
     } catch (error) {
@@ -216,8 +268,12 @@ router.post('/import/json', async (req, res) => {
       throw error;
     }
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur lors de l\'import' });
+    console.error('❌ Erreur import:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Erreur lors de l\'import',
+      details: error.message
+    });
   }
 });
 
