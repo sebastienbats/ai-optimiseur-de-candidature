@@ -13,7 +13,6 @@ let db;
 /**
  * Service OAuth 2.0 avec PKCE (Proof Key for Code Exchange)
  * Implémente PKCE manuellement sans dépendance externe
- * Utilise le module crypto de Node.js
  */
 export class OAuth2Service {
   constructor() {
@@ -51,34 +50,20 @@ export class OAuth2Service {
       redirectUri: this.config.redirect_uri || 'urn:ietf:wg:oauth:2.0:oob'
     });
 
-    // Si des tokens existent, les définir
     if (this.config.access_token) {
-      const credentials = {
-        access_token: this.config.access_token
-      };
-      
-      // Ajouter le refresh token s'il existe
+      const credentials = { access_token: this.config.access_token };
       if (this.config.refresh_token) {
         credentials.refresh_token = this.config.refresh_token;
       }
-      
       if (this.config.expiry_date) {
         credentials.expiry_date = parseInt(this.config.expiry_date);
       }
-      
       this.oauth2Client.setCredentials(credentials);
-      console.log('✅ Tokens OAuth chargés depuis la base de données');
-      
-      // Vérifier si un refresh token est présent
-      if (!this.config.refresh_token) {
-        console.warn('⚠️ Aucun refresh token trouvé. Une ré-authentification sera nécessaire.');
-      }
-    } else {
-      console.log('ℹ️ Aucun token OAuth trouvé.');
+      console.log('✅ Tokens OAuth chargés');
     }
 
     this.initialized = true;
-    console.log('✅ OAuth 2.0 client initialisé (PKCE manuel)');
+    console.log('✅ OAuth 2.0 client initialisé');
   }
 
   /**
@@ -135,21 +120,18 @@ export class OAuth2Service {
   }
 
   /**
-   * Génère un challenge PKCE (code_verifier + code_challenge)
+   * Génère un challenge PKCE
    */
   generatePKCEChallenge() {
     try {
-      console.log('🔄 Génération PKCE avec crypto Node.js...');
+      console.log('🔄 Génération PKCE...');
       
       const verifier = this.generateCodeVerifier();
-      console.log(`📝 Code Verifier: ${verifier.substring(0, 20)}... (${verifier.length} chars)`);
-      
       const challenge = this.sha256Base64(verifier);
-      console.log(`🔑 Code Challenge: ${challenge.substring(0, 20)}... (${challenge.length} chars)`);
       
       this.pkceVerifier = verifier;
       
-      console.log('✅ PKCE challenge généré (manuel avec crypto Node.js)');
+      console.log('✅ PKCE challenge généré');
       
       return {
         codeVerifier: verifier,
@@ -175,13 +157,11 @@ export class OAuth2Service {
         throw new Error('Client OAuth non initialisé');
       }
 
-      // Vérifier si un refresh token est disponible
       if (!this.hasRefreshToken()) {
         console.warn('⚠️ Aucun refresh token disponible.');
-        throw new Error('REAUTHENTICATION_REQUIRED: Aucun refresh token trouvé. Veuillez ré-authentifier.');
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
       }
 
-      // Vérifier si le token est expiré
       const now = Date.now();
       const expiryDate = this.oauth2Client.credentials.expiry_date || 0;
       
@@ -192,14 +172,11 @@ export class OAuth2Service {
 
       console.log('🔄 Rafraîchissement du token OAuth...');
       
-      // Rafraîchir le token
       const response = await this.oauth2Client.refreshAccessToken();
       const credentials = response.credentials;
 
-      // Mettre à jour les credentials
       this.oauth2Client.setCredentials(credentials);
 
-      // Sauvegarder les nouveaux tokens
       const smtpConfig = new SmtpConfig(db);
       await smtpConfig.updateOAuthTokens(
         credentials.access_token,
@@ -207,12 +184,11 @@ export class OAuth2Service {
         credentials.expiry_date
       );
 
-      // Mettre à jour la configuration en mémoire
       this.config.access_token = credentials.access_token;
       this.config.refresh_token = credentials.refresh_token || this.config.refresh_token;
       this.config.expiry_date = credentials.expiry_date;
 
-      console.log('✅ Token OAuth rafraîchi avec succès');
+      console.log('✅ Token OAuth rafraîchi');
       return credentials.access_token;
     } catch (error) {
       console.error('❌ Erreur rafraîchissement token:', error);
@@ -221,10 +197,10 @@ export class OAuth2Service {
           error.message.includes('invalid refresh token') ||
           error.message.includes('No refresh token') ||
           error.message.includes('REAUTHENTICATION_REQUIRED')) {
-        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier pour obtenir un nouveau refresh token.');
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
       }
       
-      throw new Error(`Impossible de rafraîchir le token OAuth: ${error.message}`);
+      throw new Error(`Impossible de rafraîchir le token: ${error.message}`);
     }
   }
 
@@ -237,9 +213,8 @@ export class OAuth2Service {
       
       await this.initialize();
       
-      // Vérifier si un refresh token est disponible
       if (!this.hasRefreshToken()) {
-        throw new Error('REAUTHENTICATION_REQUIRED: Aucun refresh token. Veuillez ré-authentifier.');
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
       }
       
       await this.refreshAccessToken();
@@ -280,7 +255,7 @@ export class OAuth2Service {
       
       if (error.message.includes('REAUTHENTICATION_REQUIRED') ||
           error.message.includes('invalid_grant')) {
-        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier pour continuer.');
+        throw new Error('REAUTHENTICATION_REQUIRED: Veuillez ré-authentifier.');
       }
       
       throw new Error(`Échec envoi email: ${error.message}`);
@@ -292,7 +267,7 @@ export class OAuth2Service {
    */
   async getAuthUrl() {
     try {
-      console.log('🔐 Génération URL OAuth avec PKCE manuel...');
+      console.log('🔐 Génération URL OAuth...');
       
       const isComplete = await this.isConfigurationComplete();
       if (!isComplete) {
@@ -325,14 +300,14 @@ export class OAuth2Service {
       });
 
       this._pendingVerifier = pkce.codeVerifier;
+      console.log(`✅ Verifier stocké: ${this._pendingVerifier.substring(0, 20)}...`);
 
       console.log('✅ URL d\'autorisation générée');
-      console.log(`🔗 URL: ${url.substring(0, 100)}...`);
       console.log('📝 Instructions:');
       console.log('  1. Ouvrez l\'URL dans un navigateur');
       console.log('  2. Connectez-vous avec votre compte Google');
       console.log('  3. Autorisez l\'accès');
-      console.log('  4. Copiez le code affiché');
+      console.log('  4. Copiez le code affiché (il expire après 10 minutes)');
       console.log('  5. Revenez et collez le code');
 
       return url;
@@ -344,11 +319,22 @@ export class OAuth2Service {
 
   /**
    * Échange le code d'autorisation contre des tokens (avec PKCE)
+   * CORRIGÉ : Le code_verifier est maintenant correctement transmis
    */
   async exchangeCode(code) {
     try {
-      console.log('🔄 Échange du code OAuth...');
+      console.log('🔄 Échange du code OAuth avec PKCE...');
       
+      // Vérifier que le code est valide
+      if (!code || code.trim() === '') {
+        throw new Error('Code d\'autorisation vide. Veuillez générer une nouvelle URL.');
+      }
+
+      // Nettoyer le code
+      code = code.trim();
+
+      console.log(`📝 Code reçu: ${code.substring(0, 20)}... (${code.length} chars)`);
+
       const isComplete = await this.isConfigurationComplete();
       if (!isComplete) {
         throw new Error('Configuration OAuth 2.0 incomplète.');
@@ -360,19 +346,20 @@ export class OAuth2Service {
         throw new Error('Client OAuth non initialisé');
       }
 
+      // Récupérer le verifier stocké
       const verifier = this._pendingVerifier || this.pkceVerifier;
       
       if (!verifier) {
-        throw new Error('Aucun PKCE verifier disponible.');
+        throw new Error('Aucun PKCE verifier disponible. Veuillez générer une nouvelle URL d\'autorisation.');
       }
 
-      console.log(`📝 Code reçu: ${code.substring(0, 20)}... (${code.length} chars)`);
-      console.log(`🔑 Verifier: ${verifier.substring(0, 20)}... (${verifier.length} chars)`);
+      console.log(`🔑 Verifier utilisé: ${verifier.substring(0, 20)}... (${verifier.length} chars)`);
 
-      // IMPORTANT: Utiliser le code_verifier pour l'échange
+      // IMPORTANT: Utiliser la méthode getToken avec le code_verifier
+      // La méthode getToken de google-auth-library accepte un objet avec code_verifier
       const response = await this.oauth2Client.getToken({
         code: code,
-        code_verifier: verifier
+        code_verifier: verifier  // <-- C'est ici que le code_verifier doit être passé
       });
 
       const tokens = response.tokens;
@@ -387,7 +374,7 @@ export class OAuth2Service {
       if (tokens.refresh_token) {
         console.log('✅ Refresh token obtenu');
       } else {
-        console.warn('⚠️ Aucun refresh token reçu. Cela peut arriver si le redirect_uri est "urn:ietf:wg:oauth:2.0:oob".');
+        console.warn('⚠️ Aucun refresh token reçu.');
         console.warn('⚠️ Pour obtenir un refresh token, utilisez un redirect_uri HTTPS valide.');
       }
 
@@ -403,22 +390,27 @@ export class OAuth2Service {
       this.config.refresh_token = tokens.refresh_token || this.config.refresh_token;
       this.config.expiry_date = tokens.expiry_date || this.config.expiry_date;
 
+      // Nettoyer le verifier
       this._pendingVerifier = null;
       this.pkceVerifier = null;
 
-      console.log('✅ Tokens OAuth sauvegardés');
+      console.log('✅ Tokens OAuth sauvegardés avec succès');
       return tokens;
     } catch (error) {
       console.error('❌ Erreur échange code:', error);
       
+      // Analyser l'erreur pour donner un message plus précis
       if (error.message.includes('invalid_grant')) {
-        throw new Error('Code invalide ou expiré. Générez une nouvelle URL.');
+        if (error.message.includes('Missing code verifier')) {
+          throw new Error('Code verifier PKCE manquant. Veuillez générer une nouvelle URL d\'autorisation.');
+        }
+        throw new Error('Code invalide ou expiré. Les codes expirent après 10 minutes. Générez une nouvelle URL.');
       } else if (error.message.includes('redirect_uri_mismatch')) {
-        throw new Error('Redirect URI ne correspond pas.');
+        throw new Error('Redirect URI ne correspond pas. Vérifiez la configuration.');
       } else if (error.message.includes('invalid_client')) {
-        throw new Error('Client ID ou Client Secret invalide.');
-      } else if (error.message.includes('PKCE verifier')) {
-        throw new Error('Verifier PKCE manquant. Générez une nouvelle URL.');
+        throw new Error('Client ID ou Client Secret invalide. Vérifiez vos identifiants.');
+      } else if (error.message.includes('access_denied')) {
+        throw new Error('Accès refusé par l\'utilisateur. Veuillez autoriser l\'accès dans Google.');
       }
       
       throw new Error(`Échec de l'échange: ${error.message}`);
@@ -443,7 +435,6 @@ export class OAuth2Service {
         return { valid: false, error: 'Client non initialisé' };
       }
 
-      // Vérifier si un refresh token est disponible
       if (!this.hasRefreshToken()) {
         return { 
           valid: false, 
